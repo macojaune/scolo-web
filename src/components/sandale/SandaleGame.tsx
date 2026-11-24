@@ -60,7 +60,7 @@ export default function SandaleGame({ onClose, onLeaderboard }: { onClose: () =>
         <button className={styles.primary} type="button" onClick={game.resume}>Reprendre</button>
       </div>}
       {mode === 'over' && <div className={styles.curtain}>
-        <h3>Perdu</h3>
+        <h3>Mordu</h3>
         <p className={styles.finalTime}>{formatDuration(frame.elapsedMs)}</p>
         {game.newRecord && <span className={styles.recordNote}>Record !</span>}
         <div className={styles.resultActions}>
@@ -76,6 +76,6 @@ export default function SandaleGame({ onClose, onLeaderboard }: { onClose: () =>
     </div>
     <p id={controlsId} className={styles.srOnly}>Clic ou tap pour écraser avant le pied. Au clavier : 1 en haut, 2 au milieu, 3 en bas. Échap pour mettre en pause.</p>
     <span className={styles.srOnly} data-testid="crushed-count">{frame.crushed}</span>
-    <p className={styles.srOnly} role="status" aria-live="polite">{mode === 'over' ? 'Perdu.' : mode === 'paused' ? 'Partie en pause.' : mode === 'countdown' ? `Prêt ? ${game.countdown}` : ''}</p>
+    <p className={styles.srOnly} role="status" aria-live="polite">{mode === 'over' ? 'Mordu.' : mode === 'paused' ? 'Partie en pause.' : mode === 'countdown' ? `Prêt ? ${game.countdown}` : ''}</p>
   </section>
 }
