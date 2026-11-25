@@ -3,7 +3,7 @@ import { buildParticipationTweet, type ParticipationSnapshot } from './tweet-tex
 
 type Connection = Pick<Client, 'execute'>
 export const PARTICIPANT_MILESTONES = [10, 25, 50, 100] as const
-export const PREDICTION_MILESTONES = [25, 50, 100, 250] as const
+export const PREDICTION_MILESTONES = [15, 50, 100, 250] as const
 export const PARTICIPATION_INTERVAL = 86_400_000
 export const participationSchema = [
   `CREATE TABLE IF NOT EXISTS scolo_participation_progress (

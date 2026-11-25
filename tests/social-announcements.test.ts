@@ -123,24 +123,26 @@ test('participant thresholds enqueue once and prediction replays do not change p
   assert.equal(row.status, 'pending')
 })
 
-test('prediction milestones require five distinct players and combine with simultaneous participant milestones', async t => {
+test('prediction milestones require five distinct players and combine with pending participant milestones', async t => {
   const { bet, rows, client, roundId } = await fixture(t)
-  for (let i = 0; i < 25; i++) await bet(i % 4)
+  for (let i = 0; i < 15; i++) await bet(i % 4)
   assert.equal((await rows()).length, 0, 'one small group cannot trigger a prediction-only announcement')
   await bet(4)
   assert.equal((await rows()).length, 1)
   for (let i = 5; i < 10; i++) await bet(i)
   assert.equal((await rows()).length, 1)
-  assert.match(String((await rows())[0]!.content), /10 joueurs et 31 pronostics/)
+  assert.match(String((await rows())[0]!.content), /10 joueurs et 21 pronostics/)
   const progress = (await client.execute({ sql: 'SELECT * FROM scolo_participation_progress WHERE round_id=?', args: [roundId] })).rows[0]!
-  assert.equal(progress.participant_milestone, 10); assert.equal(progress.prediction_milestone, 25)
+  assert.equal(progress.participant_milestone, 10); assert.equal(progress.prediction_milestone, 15)
 })
 
 test('delayed announcements refresh actual duration, pot and counts, merging all pending milestones', async t => {
   const { bet, rows, client } = await fixture(t)
-  for (let i = 0; i < 25; i++) await bet(i)
+  for (let i = 0; i < 14; i++) await bet(i % 5)
+  assert.equal((await rows()).length, 0)
+  await bet(0)
   assert.equal((await rows()).length, 1)
-  for (let i = 0; i < 17; i++) await bet(i)
+  for (let i = 0; i < 27; i++) await bet(i % 25)
   const id = await nextParticipationTweet(client, START + DAY)
   assert.equal(id, String((await rows())[0]!.id))
   const content = String((await rows())[0]!.content)
