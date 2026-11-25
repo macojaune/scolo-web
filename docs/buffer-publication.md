@@ -127,7 +127,7 @@ Aucun essai connecté à Buffer ni tweet réel n’est couvert par ces résultat
 
 ## Paliers de participation
 
-Par manche, les paliers sont 10, 25, 50 et 100 joueurs distincts, ainsi que 25,
+Par manche, les paliers sont 10, 25, 50 et 100 joueurs distincts, ainsi que 15,
 50, 100 et 250 pronostics. Les paliers de pronostics exigent au moins cinq
 joueurs. Une mise de plusieurs Zikak reste un seul pronostic. Les inscriptions
 sans pari ne comptent pas. Un rejeu de confirmation ne déclenche rien.
