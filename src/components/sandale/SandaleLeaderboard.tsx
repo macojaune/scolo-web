@@ -1,30 +1,47 @@
+import { gameLabel, gameScore, type ArcadeGame } from '~/game/weapons/catalog'
 import { useAuth, useClerk } from '@clerk/nextjs'
-import { useEffect, useId, useRef, useState } from 'react'
+import { skipToken, useQuery } from '@tanstack/react-query'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
+import type { CompletedWeaponScore } from '~/game/sandale/protocol'
 import { AUTH_RETURN_KEY } from '~/game/sandale/pending-scores'
-import { formatDuration } from '~/game/sandale/engine'
 import { api } from '~/utils/api'
 import type { useScoreRecovery } from './useScoreRecovery'
 import LeaderboardShare from './LeaderboardShare'
 import styles from './SandaleLeaderboard.module.css'
 
+const LeaderboardTabs = lazy(() => import('./LeaderboardTabs').then(module => ({ default: module.LeaderboardTabs })))
+
 type Bonus = { key: string; amount: number; total: number; viewerId: string }
-type Props = { open: boolean; onClose: () => void } & (
-  | { view: 'records'; scores?: never; onReplay?: never }
-  | { view?: 'session'; scores: ReturnType<typeof useScoreRecovery>; onReplay: () => void }
+type Props = { game?: ArcadeGame; open: boolean; onClose: () => void } & (
+  | { view: 'records'; onRecordsGameChange: (game: 'coutelas' | 'sandale') => void; scores?: never; onReplay?: never; finished?: never }
+  | { view?: 'session'; scores: ReturnType<typeof useScoreRecovery>; onReplay: () => void; finished?: CompletedWeaponScore }
 )
-export default function SandaleLeaderboard({ open, onClose, onReplay, scores, view = 'session' }: Props) {
+export default function SandaleLeaderboard(props: Props) {
+  const { open, onClose, game: initialGame = 'sandale' } = props
+  const [sessionTab, setSessionTab] = useState<'coutelas' | 'sandale' | null>(null)
+  const game = props.view === 'records' ? initialGame : sessionTab ?? initialGame
+  const records = props.view === 'records' || game !== initialGame
+  const view = records ? 'records' : 'session'
+  const scores = records ? undefined : props.scores
+  const finished = records ? undefined : props.finished
   const dialog = useRef<HTMLDialogElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const ownRow = useRef<HTMLTableRowElement>(null)
   const titleId = useId()
   const clerk = useClerk()
   const auth = useAuth()
-  const records = view === 'records'
   const viewerId = scores?.viewerId ?? auth.userId ?? null
   const utils = api.useUtils()
   const [offset, setOffset] = useState<number | undefined>()
-  const ranking = api.arcade.standings.useQuery({ viewerId, offset: records ? offset ?? 0 : offset, view }, { enabled: open && auth.isLoaded })
-  const rewards = api.arcade.leaderboard.useQuery({ viewerId }, { enabled: open && auth.isLoaded && !records })
+  const standings = api.arcade.standings.useQuery({ viewerId, game, offset: records ? offset ?? 0 : offset, view }, { enabled: open && auth.isLoaded && !finished })
+  const resultStandings = useQuery({
+    queryKey: ['arcade-run-standings', game, viewerId, finished?.id, offset],
+    queryFn: finished ? () => utils.client.arcade.runStandings.mutate({ viewerId, game, token: finished.token, offset }) : skipToken,
+    enabled: Boolean(finished && open && auth.isLoaded && !scores?.busy && !scores?.claiming && !scores?.error),
+  })
+  const ranking = finished ? resultStandings : standings
+  const board = ranking.data
+  const rewards = api.arcade.leaderboard.useQuery({ viewerId, game }, { enabled: open && auth.isLoaded && !records })
   const attemptedRewards = useRef(new Set<string>())
   const seenBonuses = useRef(new Set<string>())
   const [collectedBonus, setCollectedBonus] = useState<Bonus | null>(null)
@@ -38,24 +55,23 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
   useEffect(() => {
     if (open && !dialog.current?.open) dialog.current?.showModal()
     else if (!open && dialog.current?.open) dialog.current.close()
-    if (!open) setOffset(undefined)
   }, [open])
   useEffect(() => {
     if (!open || records || !scores?.viewerId || !rewards.data?.reward?.available) return
     const key = `${scores.viewerId}:${rewards.data.reward.total}:${rewards.data.reward.available}`
     if (attemptedRewards.current.has(key)) return
     attemptedRewards.current.add(key)
-    collectReward({ viewerId: scores.viewerId })
-  }, [open, records, scores?.viewerId, rewards.data, collectReward])
+    collectReward({ viewerId: scores.viewerId, game })
+  }, [open, records, scores?.viewerId, rewards.data, collectReward, game])
   const collected = collectedBonus?.viewerId === viewerId ? collectedBonus : null
   const bonus = scores?.bonus && (!collected || scores.bonus.total >= collected.total) ? scores.bonus : collected
   useEffect(() => {
     if (!open || records || !bonus || bonus.viewerId !== viewerId || seenBonuses.current.has(bonus.key)) return
-    const key = `scolo:sandale-bonus-seen:${bonus.key}`
+    const key = `scolo:${game}-bonus-seen:${bonus.key}`
     seenBonuses.current.add(bonus.key)
     try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1') } catch { /* The server cap remains authoritative with blocked storage. */ }
     setToast(bonus)
-  }, [open, records, bonus, viewerId])
+  }, [open, records, bonus, viewerId, game])
   useEffect(() => {
     if (!open) { setToast(null); return }
     if (!toast) return
@@ -67,9 +83,16 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
     const container = list.current
     const row = ownRow.current
     container.scrollTop = !records && offset === undefined && row ? container.scrollTop + row.getBoundingClientRect().top - container.getBoundingClientRect().top - (container.clientHeight - row.clientHeight) / 2 : 0
-  }, [open, records, offset, ranking.data])
-  const current = ranking.data?.me ?? (records ? null : scores?.pending.data ?? scores?.saved)
+  }, [open, records, offset, board])
+  const current = board?.me ?? finished ?? (records ? null : scores?.pending.data ?? scores?.saved)
   const visibleBonus = !records && toast?.viewerId === viewerId ? toast : null
+
+  function selectGame(next: 'coutelas' | 'sandale') {
+    if (next === game) return
+    setOffset(undefined)
+    if (props.view === 'records') props.onRecordsGameChange(next)
+    else setSessionTab(next)
+  }
 
   function signIn() {
     try { localStorage.setItem(AUTH_RETURN_KEY, 'true') } catch { /* Durable receipt survives OAuth. */ }
@@ -78,50 +101,62 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
     clerk.openSignIn({ forceRedirectUrl: '/#run', signUpForceRedirectUrl: '/#run' })
   }
 
-  // A delayed native close event must not rewrite the URL after Forward reopens the records view.
-  return <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); onClose() }} onClose={records ? undefined : onClose}
-    onClick={event => {
-      const rect = event.currentTarget.getBoundingClientRect()
-      if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose()
-    }}>
-    <header className={styles.header}>
-      <h2 id={titleId}>Le classement</h2>
-      <button type="button" className={styles.close} aria-label="Fermer le classement" onClick={onClose}>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
-      </button>
-    </header>
+  const content = <>
     {current && <section className={styles.result} aria-label={records ? 'Ton record' : 'Résultat de cette partie'}>
-      <div className={styles.position}><span>{records ? 'Ton record' : ranking.data?.sessionId ? 'Cette partie' : 'Ta place'}</span><div className={styles.placeValue}><strong>{ranking.data?.me ? `#${ranking.data.me.rank}` : '…'}</strong>
+      <div className={styles.position}><span>{records ? 'Ton record' : finished || board?.sessionId ? 'Cette partie' : 'Ta place'}</span><div className={styles.placeValue}><strong>{board?.me ? `#${board.me.rank}` : '…'}</strong>
         {visibleBonus && <span key={visibleBonus.key} className={styles.bonus} role="status">+{visibleBonus.amount} Zikak</span>}
       </div></div>
-      <div className={styles.time}><span>Ton temps</span><strong>{formatDuration(current.elapsedMs)}</strong></div>
+      <div className={styles.time}><span>{game === 'sandale' ? 'Ton temps' : 'Ton score'}</span><strong>{gameScore(game, current)}</strong></div>
     </section>}
     {scores && <section className={styles.saveState} aria-label="Enregistrement de ta partie">
       {scores.busy && <p role="status">Sauvegarde…</p>}
       {scores.claiming && <p role="status">Enregistrement…</p>}
       {scores.pending.data?.otherAccount && <p role="alert">Cette partie appartient à un autre compte. Elle reste conservée pour ce compte.</p>}
-      {!scores.isSignedIn && scores.pending.data && !scores.pending.data.otherAccount && <button className={styles.secondary} type="button" disabled={scores.busy} onClick={signIn}>Se connecter pour enregistrer</button>}
+      {!scores.isSignedIn && (!finished || board) && scores.pending.data && !scores.pending.data.otherAccount && <button className={styles.secondary} type="button" disabled={scores.busy} onClick={signIn}>Se connecter pour enregistrer</button>}
       {scores.error && <div role="alert"><p>{scores.error}</p><button className={styles.inline} type="button" onClick={() => void scores.retry()}>Réessayer la sauvegarde</button></div>}
       {scores.pending.error && <p role="alert">La récupération ne répond pas. <button className={styles.inline} type="button" onClick={() => void scores.pending.refetch()}>Réessayer</button></p>}
       {collecting && <p role="status">Crédit en cours…</p>}
-      {rewardError && <p role="alert">Le bonus reste disponible. <button className={styles.inline} type="button" onClick={() => scores.viewerId && collectReward({ viewerId: scores.viewerId })}>Réessayer</button></p>}
+      {rewardError && <p role="alert">Le bonus reste disponible. <button className={styles.inline} type="button" onClick={() => scores.viewerId && collectReward({ viewerId: scores.viewerId, game })}>Réessayer</button></p>}
     </section>}
-    {ranking.isPending && <p role="status" className={styles.empty}>Chargement du classement…</p>}
+    {ranking.isPending && !scores?.error && <p role="status" className={styles.empty}>Chargement du classement…</p>}
     {ranking.error && <div className={styles.empty} role="alert">Le classement est indisponible. <button className={styles.inline} type="button" onClick={() => void ranking.refetch()}>Réessayer</button></div>}
-    {ranking.data && (ranking.data.entries.length ? <>
+    {board && (board.entries.length ? <>
       <div ref={list} className={styles.scrollArea} role="region" aria-label="Joueurs du classement" tabIndex={0}>
-        {ranking.data.previousOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(ranking.data!.previousOffset!)}>Voir les places précédentes</button>}
+        {board.previousOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(board.previousOffset ?? undefined)}>Voir les places précédentes</button>}
         <table className={styles.table}>
-          <caption className={styles.srOnly}>Classement, {ranking.data.total} résultats</caption>
-          <thead><tr><th scope="col">Place</th><th scope="col">Joueur</th><th scope="col">Temps</th></tr></thead>
-          <tbody>{ranking.data.entries.map(entry => <tr key={entry.rank} ref={(entry.isCurrentRun || (!ranking.data.sessionId && entry.isMe)) ? ownRow : undefined} className={entry.isMe ? styles.me : undefined} aria-current={(entry.isCurrentRun || (!ranking.data.sessionId && entry.isMe)) ? 'true' : undefined}>
-            <td>{entry.rank}</td><th scope="row"><span>{entry.name}</span>{entry.isMe && <small className={styles.you}>{entry.isCurrentRun ? 'cette partie' : 'ton record'}</small>}</th><td>{formatDuration(entry.elapsedMs)}</td>
+          <caption className={styles.srOnly}>Classement, {board.total} résultats</caption>
+          <thead><tr><th scope="col">Place</th><th scope="col">Joueur</th><th scope="col">{game === 'sandale' ? 'Temps' : 'Score'}</th></tr></thead>
+          <tbody>{board.entries.map(entry => <tr key={entry.rank} ref={(entry.isCurrentRun || (!board.sessionId && entry.isMe)) ? ownRow : undefined} className={entry.isMe ? styles.me : undefined} aria-current={(entry.isCurrentRun || (!board.sessionId && entry.isMe)) ? 'true' : undefined}>
+            <td>{entry.rank}</td><th scope="row"><span>{entry.name}</span>{entry.isMe && <small className={styles.you}>{entry.isCurrentRun ? 'cette partie' : 'ton record'}</small>}</th><td>{gameScore(game, entry)}</td>
           </tr>)}</tbody>
         </table>
-        {ranking.data.nextOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(ranking.data!.nextOffset!)}>Voir les places suivantes</button>}
+        {board.nextOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(board.nextOffset ?? undefined)}>Voir les places suivantes</button>}
       </div>
-    </> : <p className={styles.empty}>La première place t’attend.</p>)}
-    <div className={records ? styles.recordsActions : styles.actions}>{onReplay && <button type="button" className={styles.secondary} onClick={onReplay}>Rejouer</button>}<LeaderboardShare board={ranking.data} records={records} /></div>
+    </> : <p className={styles.empty}>{records && game === 'sandale' ? 'Aucun record de sandale enregistré.' : 'La première place t’attend.'}</p>)}
+    <div className={records ? styles.recordsActions : styles.actions}>{!records && props.onReplay && <button type="button" className={styles.secondary} onClick={props.onReplay}>Rejouer</button>}{(!finished || board) && <LeaderboardShare key={game} game={game} board={board} records={records} />}</div>
+  </>
+
+  // A delayed native close event must not rewrite the URL after Forward reopens the records view.
+  return <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
+    onCancel={event => { event.preventDefault(); onClose() }}
+    onClose={event => {
+      if (event.currentTarget.open) return
+      setOffset(undefined)
+      setSessionTab(null)
+      if (props.view !== 'records') onClose()
+    }}
+    onClick={event => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose()
+    }}>
+    <header className={styles.header}>
+      <h2 id={titleId}>{game === 'sandale' ? 'Le classement' : `Classement : ${gameLabel(game)}`}</h2>
+      <button type="button" className={styles.close} aria-label="Fermer le classement" onClick={onClose}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
+      </button>
+    </header>
+    {open && (game === 'digrain' ? content : <Suspense fallback={content}>
+      <LeaderboardTabs value={game} onValueChange={selectGame}>{content}</LeaderboardTabs>
+    </Suspense>)}
   </dialog>
 }

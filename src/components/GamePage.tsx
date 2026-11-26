@@ -1,3 +1,4 @@
+import WeaponEasterEgg from '~/components/weapons/WeaponEasterEgg'
 import { useAuth, SignInButton, UserButton } from '@clerk/nextjs'
 import { useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
@@ -6,7 +7,7 @@ import SandaleEasterEgg from '~/components/sandale/SandaleEasterEgg'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import SandaleLeaderboard from '~/components/sandale/SandaleLeaderboard'
-import { leaderboardGame, SANDALE_LEADERBOARD_PATH } from '~/game/arcade-links'
+import { leaderboardGame, leaderboardPath } from '~/game/arcade-links'
 import EncounterHistory from '~/components/EncounterHistory'
 import PredictionGame from '~/components/PredictionGame'
 import ZikakLabel from '~/components/ZikakLabel'
@@ -25,11 +26,13 @@ import {
 
 export default function GamePage() {
   const router = useRouter()
-  const recordsOpen = router.isReady && leaderboardGame(router.query.classement) === 'sandale'
-  function closeRecords() {
+  const recordsGame = router.isReady ? leaderboardGame(router.query.classement) : null
+  const recordsOpen = recordsGame !== null
+  function changeRecords(next: 'coutelas' | 'sandale' | null) {
     if (!recordsOpen) return
     const query = { ...router.query }
-    delete query.classement
+    if (next) query.classement = next
+    else delete query.classement
     void router.replace({ pathname: router.pathname, query, hash: router.asPath.split('#')[1] }, undefined, { shallow: true, scroll: false })
   }
   const { isLoaded, isSignedIn, userId } = useAuth()
@@ -202,11 +205,13 @@ export default function GamePage() {
           </p>
           <p className="footer-details">
             <span>Parie avec des points fictifs. Aucun argent réel.</span>
-            <Link href={SANDALE_LEADERBOARD_PATH} shallow scroll={false} aria-haspopup="dialog">Classement de la sandale</Link>
+            <Link href={leaderboardPath('sandale')} shallow scroll={false} aria-haspopup="dialog">Classement de la sandale</Link>
+            <Link href={leaderboardPath('coutelas')} shallow scroll={false} aria-haspopup="dialog">Classement du coutelas</Link>
             <Link href="/confidentialite">Confidentialité</Link>
           </p>
         </footer>
-        <SandaleLeaderboard view="records" open={recordsOpen} onClose={closeRecords} />
+        <SandaleLeaderboard game={recordsGame ?? 'sandale'} view="records" open={recordsOpen}
+          onRecordsGameChange={changeRecords} onClose={() => changeRecords(null)} />
       </div>
     </div>
   )
@@ -291,7 +296,7 @@ function LastEncounter({ game, recordsOpen }: { game: PublicGame; recordsOpen: b
         )}
       </div>
       {encounter && Object.hasOwn(weapons, encounter.tool) && (
-        encounter.tool === 'sandale' ? <SandaleEasterEgg recordsOpen={recordsOpen} /> : <Image
+        encounter.tool === 'sandale' ? <SandaleEasterEgg recordsOpen={recordsOpen} /> : encounter.tool === 'coutelas' ? <WeaponEasterEgg key={encounter.tool} game={encounter.tool} recordsOpen={recordsOpen} /> : <Image
           src={`/${encounter.tool}.png`}
           width={200}
           height={200}

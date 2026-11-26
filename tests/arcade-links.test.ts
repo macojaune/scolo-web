@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { leaderboardGame, SANDALE_LEADERBOARD_PATH } from '../src/game/arcade-links'
+import { leaderboardGame, leaderboardPath, SANDALE_LEADERBOARD_PATH } from '../src/game/arcade-links'
 
-test('leaderboard URLs identify a game, not a page or an unimplemented weapon', () => {
-  assert.equal(SANDALE_LEADERBOARD_PATH, '/?classement=1')
-  assert.equal(leaderboardGame('1'), 'sandale')
-  for (const value of [undefined, '', '0', '2', '3', '01', 'sandale', ['1'], ['1', '2']]) {
+test('public leaderboard links use the game name', () => {
+  assert.equal(SANDALE_LEADERBOARD_PATH, '/?classement=sandale')
+  for (const game of ['sandale', 'coutelas'] as const) {
+    assert.equal(leaderboardPath(game), `/?classement=${game}`)
+    assert.equal(leaderboardGame(game), game)
+  }
+  for (const value of [undefined, '', '1', '2', '3', '01', 'unknown', 'digrain', ['sandale'], ['sandale', 'coutelas']]) {
     assert.equal(leaderboardGame(value), null)
   }
 })

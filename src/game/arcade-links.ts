@@ -1,7 +1,8 @@
-// Stable game identifiers, independent from the current weapon and leaderboard pages.
-export const SANDALE_LEADERBOARD_ID = '1'
-export const SANDALE_LEADERBOARD_PATH = `/?classement=${SANDALE_LEADERBOARD_ID}`
+import { gameInput, type ArcadeGame } from './weapons/catalog'
 
-export function leaderboardGame(value: unknown): 'sandale' | null {
-  return value === SANDALE_LEADERBOARD_ID ? 'sandale' : null
+export const leaderboardPath = (game: ArcadeGame) => `/?classement=${game}`
+export const SANDALE_LEADERBOARD_PATH = leaderboardPath('sandale')
+
+export function leaderboardGame(value: unknown): ArcadeGame | null {
+  return gameInput.safeParse(value).data ?? null
 }
