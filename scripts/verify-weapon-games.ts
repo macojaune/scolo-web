@@ -18,7 +18,7 @@ async function checkPublicTab(dialog: Locator, game: 'Coutelas' | 'Sandale') {
   const shareLink = await dialog.getByRole('link', { name: 'X / Twitter' }).getAttribute('href')
   assert.ok(shareLink)
   const destination = new URL(shareLink).searchParams.get('url')
-  assert.equal(destination, `https://scolo.marvinl.com/?classement=${game === 'Sandale' ? 1 : 3}`)
+  assert.equal(destination, `https://scolo.marvinl.com/?classement=${game.toLowerCase()}`)
   await share.click()
 }
 
@@ -181,7 +181,7 @@ try {
   assert.equal(overflow,false);assert.deepEqual(errors,[])
   await dialog.getByRole('button',{name:'Fermer le mini-jeu'}).click();await expect(dialog).not.toBeVisible()
   await expect(trigger).toBeFocused()
-  await page.goto(new URL(`/?classement=${game==='digrain'?2:3}`,target).href)
+  await page.goto(new URL(`/?classement=${game}`,target).href)
   const records = page.getByRole('dialog')
   await expect(records).toBeVisible()
   if (game === 'coutelas') {
@@ -189,12 +189,12 @@ try {
     await records.getByRole('tab', {name:'Coutelas', exact:true}).press('ArrowRight')
     await expect(records.getByRole('tab', {name:'Sandale', exact:true})).toBeFocused()
     await checkPublicTab(records, 'Sandale')
-    await expect(page).toHaveURL(new URL('/?classement=1', target).href)
-    await page.goto(new URL('/?classement=1', target).href)
+    await expect(page).toHaveURL(new URL('/?classement=sandale', target).href)
+    await page.goto(new URL('/?classement=sandale', target).href)
     await checkPublicTab(records, 'Sandale')
     await records.getByRole('tab', {name:'Coutelas', exact:true}).click()
     await checkPublicTab(records, 'Coutelas')
-    await expect(page).toHaveURL(new URL('/?classement=3', target).href)
+    await expect(page).toHaveURL(new URL('/?classement=coutelas', target).href)
   } else {
     await expect(records).toHaveAccessibleName('Classement : Digrain')
   }

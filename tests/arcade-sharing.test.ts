@@ -33,9 +33,9 @@ test('sharing the records opens the sandale leaderboard directly', () => {
   const links = shareLinks(board, LEADERBOARD_SHARE_URL)
   assert.match(links.copy, /15,6 secondes à la sandale.*classé n° 2/)
   assert.match(shareLinks(undefined, LEADERBOARD_SHARE_URL).copy, /les records de la sandale/)
-  assert.equal(new URL(new URL(links.x).searchParams.get('url')!).searchParams.get('classement'), '1')
+  assert.equal(new URL(new URL(links.x).searchParams.get('url')!).searchParams.get('classement'), 'sandale')
   assert.ok(new URL(links.whatsapp).searchParams.get('text')!.endsWith(LEADERBOARD_SHARE_URL))
-  assert.ok(links.copy.endsWith('https://scolo.marvinl.com/?classement=1'))
+  assert.ok(links.copy.endsWith('https://scolo.marvinl.com/?classement=sandale'))
 })
 
 test('story export is a valid 1080 by 1920 PNG with and without a personal result', async () => {

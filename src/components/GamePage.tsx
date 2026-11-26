@@ -7,7 +7,7 @@ import SandaleEasterEgg from '~/components/sandale/SandaleEasterEgg'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import SandaleLeaderboard from '~/components/sandale/SandaleLeaderboard'
-import { leaderboardGame, leaderboardIds, leaderboardPath } from '~/game/arcade-links'
+import { leaderboardGame, leaderboardPath } from '~/game/arcade-links'
 import EncounterHistory from '~/components/EncounterHistory'
 import PredictionGame from '~/components/PredictionGame'
 import ZikakLabel from '~/components/ZikakLabel'
@@ -31,7 +31,7 @@ export default function GamePage() {
   function changeRecords(next: 'coutelas' | 'sandale' | null) {
     if (!recordsOpen) return
     const query = { ...router.query }
-    if (next) query.classement = leaderboardIds[next]
+    if (next) query.classement = next
     else delete query.classement
     void router.replace({ pathname: router.pathname, query, hash: router.asPath.split('#')[1] }, undefined, { shallow: true, scroll: false })
   }
