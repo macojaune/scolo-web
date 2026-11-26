@@ -10,7 +10,8 @@ const results: unknown[] = []
 try {
  for (const viewport of [{width:1440,height:1100},{width:390,height:844}]) for (const game of ['digrain','coutelas']) {
 
-  const page = await browser.newPage({ viewport })
+  const touch = viewport.width < 500
+  const page = await browser.newPage({ viewport, hasTouch: touch })
   const errors: string[] = []; page.on('pageerror',error=>errors.push(error.message))
   await page.addInitScript(() => localStorage.setItem('umami.disabled','1'))
   await page.route('**/api/trpc/**', async route => {
@@ -51,9 +52,27 @@ try {
    await dialog.getByRole('button',{name:'Pause',exact:true}).click();await expect(board).toHaveAttribute('data-mode','paused')
    await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click();await expect(board).toHaveAttribute('data-mode','playing')
   } else {
-   await dialog.getByRole('slider',{name:/Angle/}).fill('15');await dialog.getByRole('slider',{name:/Puissance/}).fill('10')
-   await dialog.getByRole('button',{name:'Lancer',exact:true}).click()
+   const action = dialog.getByTestId('coutelas-action')
+   await expect(board).toHaveAttribute('data-phase', 'angle')
+   if (touch) await board.tap()
+   else await action.press('Enter')
+   await expect(board).toHaveAttribute('data-phase', 'power')
+   await expect(dialog.getByTestId('coutelas-landing')).toBeVisible()
+   // Throw at low power, well short of any target.
+   await page.waitForFunction(() => {
+     const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
+     return power >= 3 && power <= 10
+   })
+   if (touch) await action.tap()
+   else await action.click()
+   await expect(board).toHaveAttribute('data-phase', 'flight')
+   await expect(board).toHaveAttribute('data-phase', 'angle')
+   await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(1)
    await expect(dialog.getByText('2 lancers',{exact:true})).toBeVisible({timeout:8000})
+   await action.press('Escape')
+   await expect(board).toHaveAttribute('data-mode', 'paused')
+   await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click()
+   await expect(board).toHaveAttribute('data-mode', 'playing')
   }
   await mkdir('.local',{recursive:true})
   await page.screenshot({path:`.local/${game}-${viewport.width}.png`,fullPage:true})
