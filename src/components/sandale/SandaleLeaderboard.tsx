@@ -1,7 +1,7 @@
 import { gameLabel, gameScore, type ArcadeGame } from '~/game/weapons/catalog'
 import { useAuth, useClerk } from '@clerk/nextjs'
 import { skipToken, useQuery } from '@tanstack/react-query'
-import { useEffect, useId, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import type { CompletedWeaponScore } from '~/game/sandale/protocol'
 import { AUTH_RETURN_KEY } from '~/game/sandale/pending-scores'
 import { api } from '~/utils/api'
@@ -9,19 +9,27 @@ import type { useScoreRecovery } from './useScoreRecovery'
 import LeaderboardShare from './LeaderboardShare'
 import styles from './SandaleLeaderboard.module.css'
 
+const LeaderboardTabs = lazy(() => import('./LeaderboardTabs').then(module => ({ default: module.LeaderboardTabs })))
+
 type Bonus = { key: string; amount: number; total: number; viewerId: string }
 type Props = { game?: ArcadeGame; open: boolean; onClose: () => void } & (
-  | { view: 'records'; scores?: never; onReplay?: never; finished?: never }
+  | { view: 'records'; onRecordsGameChange: (game: 'coutelas' | 'sandale') => void; scores?: never; onReplay?: never; finished?: never }
   | { view?: 'session'; scores: ReturnType<typeof useScoreRecovery>; onReplay: () => void; finished?: CompletedWeaponScore }
 )
-export default function SandaleLeaderboard({ open, onClose, onReplay, scores, finished, view = 'session', game = 'sandale' }: Props) {
+export default function SandaleLeaderboard(props: Props) {
+  const { open, onClose, game: initialGame = 'sandale' } = props
+  const [sessionTab, setSessionTab] = useState<'coutelas' | 'sandale' | null>(null)
+  const game = props.view === 'records' ? initialGame : sessionTab ?? initialGame
+  const records = props.view === 'records' || game !== initialGame
+  const view = records ? 'records' : 'session'
+  const scores = records ? undefined : props.scores
+  const finished = records ? undefined : props.finished
   const dialog = useRef<HTMLDialogElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const ownRow = useRef<HTMLTableRowElement>(null)
   const titleId = useId()
   const clerk = useClerk()
   const auth = useAuth()
-  const records = view === 'records'
   const viewerId = scores?.viewerId ?? auth.userId ?? null
   const utils = api.useUtils()
   const [offset, setOffset] = useState<number | undefined>()
@@ -47,7 +55,6 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, fi
   useEffect(() => {
     if (open && !dialog.current?.open) dialog.current?.showModal()
     else if (!open && dialog.current?.open) dialog.current.close()
-    if (!open) setOffset(undefined)
   }, [open])
   useEffect(() => {
     if (!open || records || !scores?.viewerId || !rewards.data?.reward?.available) return
@@ -80,6 +87,13 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, fi
   const current = board?.me ?? finished ?? (records ? null : scores?.pending.data ?? scores?.saved)
   const visibleBonus = !records && toast?.viewerId === viewerId ? toast : null
 
+  function selectGame(next: 'coutelas' | 'sandale') {
+    if (next === game) return
+    setOffset(undefined)
+    if (props.view === 'records') props.onRecordsGameChange(next)
+    else setSessionTab(next)
+  }
+
   function signIn() {
     try { localStorage.setItem(AUTH_RETURN_KEY, 'true') } catch { /* Durable receipt survives OAuth. */ }
     dialog.current?.close()
@@ -87,19 +101,7 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, fi
     clerk.openSignIn({ forceRedirectUrl: '/#run', signUpForceRedirectUrl: '/#run' })
   }
 
-  // A delayed native close event must not rewrite the URL after Forward reopens the records view.
-  return <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); onClose() }} onClose={records ? undefined : onClose}
-    onClick={event => {
-      const rect = event.currentTarget.getBoundingClientRect()
-      if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose()
-    }}>
-    <header className={styles.header}>
-      <h2 id={titleId}>{game === 'sandale' ? 'Le classement' : `Classement : ${gameLabel(game)}`}</h2>
-      <button type="button" className={styles.close} aria-label="Fermer le classement" onClick={onClose}>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
-      </button>
-    </header>
+  const content = <>
     {current && <section className={styles.result} aria-label={records ? 'Ton record' : 'Résultat de cette partie'}>
       <div className={styles.position}><span>{records ? 'Ton record' : finished || board?.sessionId ? 'Cette partie' : 'Ta place'}</span><div className={styles.placeValue}><strong>{board?.me ? `#${board.me.rank}` : '…'}</strong>
         {visibleBonus && <span key={visibleBonus.key} className={styles.bonus} role="status">+{visibleBonus.amount} Zikak</span>}
@@ -130,7 +132,31 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, fi
         </table>
         {board.nextOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(board.nextOffset ?? undefined)}>Voir les places suivantes</button>}
       </div>
-    </> : <p className={styles.empty}>La première place t’attend.</p>)}
-    <div className={records ? styles.recordsActions : styles.actions}>{onReplay && <button type="button" className={styles.secondary} onClick={onReplay}>Rejouer</button>}{(!finished || board) && <LeaderboardShare game={game} board={board} records={records} />}</div>
+    </> : <p className={styles.empty}>{records && game === 'sandale' ? 'Aucun record de sandale enregistré.' : 'La première place t’attend.'}</p>)}
+    <div className={records ? styles.recordsActions : styles.actions}>{!records && props.onReplay && <button type="button" className={styles.secondary} onClick={props.onReplay}>Rejouer</button>}{(!finished || board) && <LeaderboardShare key={game} game={game} board={board} records={records} />}</div>
+  </>
+
+  // A delayed native close event must not rewrite the URL after Forward reopens the records view.
+  return <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
+    onCancel={event => { event.preventDefault(); onClose() }}
+    onClose={event => {
+      if (event.currentTarget.open) return
+      setOffset(undefined)
+      setSessionTab(null)
+      if (props.view !== 'records') onClose()
+    }}
+    onClick={event => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose()
+    }}>
+    <header className={styles.header}>
+      <h2 id={titleId}>{game === 'sandale' ? 'Le classement' : `Classement : ${gameLabel(game)}`}</h2>
+      <button type="button" className={styles.close} aria-label="Fermer le classement" onClick={onClose}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
+      </button>
+    </header>
+    {open && (game === 'digrain' ? content : <Suspense fallback={content}>
+      <LeaderboardTabs value={game} onValueChange={selectGame}>{content}</LeaderboardTabs>
+    </Suspense>)}
   </dialog>
 }

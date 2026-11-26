@@ -1,7 +1,13 @@
 // Stable game identifiers, independent from the current weapon and leaderboard pages.
-export const SANDALE_LEADERBOARD_ID = '1'
-export const SANDALE_LEADERBOARD_PATH = `/?classement=${SANDALE_LEADERBOARD_ID}`
+export const leaderboardIds = { sandale: '1', digrain: '2', coutelas: '3' } as const
+type LeaderboardGame = keyof typeof leaderboardIds
+export const SANDALE_LEADERBOARD_ID = leaderboardIds.sandale
+export const leaderboardPath = (game: LeaderboardGame) => `/?classement=${leaderboardIds[game]}`
+export const SANDALE_LEADERBOARD_PATH = leaderboardPath('sandale')
 
-export function leaderboardGame(value: unknown): 'sandale' | 'digrain' | 'coutelas' | null {
-  return value === SANDALE_LEADERBOARD_ID ? 'sandale' : value === '2' ? 'digrain' : value === '3' ? 'coutelas' : null
+export function leaderboardGame(value: unknown): LeaderboardGame | null {
+  if (value === leaderboardIds.sandale) return 'sandale'
+  if (value === leaderboardIds.digrain) return 'digrain'
+  if (value === leaderboardIds.coutelas) return 'coutelas'
+  return null
 }

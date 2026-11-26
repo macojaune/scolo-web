@@ -1,6 +1,7 @@
 import type { ArcadeGame } from '~/game/weapons/catalog'
-import { useEffect, useId, useState } from 'react'
-import { GAME_SHARE_URL, LEADERBOARD_SHARE_URL, shareLinks, shareMessage, type ShareBoard } from '~/game/sandale/sharing'
+import { useEffect, useId, useRef, useState } from 'react'
+import { leaderboardPath } from '~/game/arcade-links'
+import { GAME_SHARE_URL, shareLinks, type ShareBoard } from '~/game/sandale/sharing'
 import styles from './SandaleLeaderboard.module.css'
 
 export default function LeaderboardShare({ board, records = false, game = 'sandale' }: { game?: ArcadeGame; board?: ShareBoard; records?: boolean }) {
@@ -9,9 +10,11 @@ export default function LeaderboardShare({ board, records = false, game = 'sanda
   const [message, setMessage] = useState<string | null>(null)
   const [image, setImage] = useState<{ file: File; url: string; canShare: boolean } | null>(null)
   const optionsId = useId()
-  const shareUrl = game === 'sandale' ? records ? LEADERBOARD_SHARE_URL : GAME_SHARE_URL : `${GAME_SHARE_URL}/?classement=${game === 'digrain' ? '2' : '3'}`
+  const storyRequest = useRef<AbortController | null>(null)
+  const shareUrl = game === 'sandale' && !records ? GAME_SHARE_URL : `${GAME_SHARE_URL}${leaderboardPath(game)}`
   const links = shareLinks(board, shareUrl, game)
   useEffect(() => () => { if (image) URL.revokeObjectURL(image.url) }, [image])
+  useEffect(() => () => storyRequest.current?.abort(), [])
 
   async function copyMessage() {
     try {
@@ -26,11 +29,13 @@ export default function LeaderboardShare({ board, records = false, game = 'sanda
     setMessage(null)
     setImage(null)
     const controller = new AbortController()
+    storyRequest.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20000)
     try {
       const response = await fetch(`/api/sandale-story?game=${game}${records ? '&view=records' : ''}`, { signal: controller.signal, cache: 'no-store' })
       if (!response.ok || !response.headers.get('content-type')?.startsWith('image/png')) throw new Error('image')
       const file = new File([await response.blob()], 'bet-a-milpat-classement-story.png', { type: 'image/png' })
+      if (controller.signal.aborted) return
       if (!file.size) throw new Error('empty image')
       const url = URL.createObjectURL(file)
       let canShare = false
@@ -51,7 +56,7 @@ export default function LeaderboardShare({ board, records = false, game = 'sanda
   async function shareImage() {
     if (!image || typeof navigator.share !== 'function') return
     setMessage('Si aucun menu de partage ne s’ouvre, utilise « Télécharger l’image ».')
-    try { await navigator.share({ files: [image.file], title: 'BÈT a milpat', text: `${shareMessage(board, game)}\n${shareUrl}` }) }
+    try { await navigator.share({ files: [image.file], title: 'BÈT a milpat', text: links.copy }) }
     catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setMessage('Le partage n’a pas abouti. Tu peux télécharger l’image.')
     }

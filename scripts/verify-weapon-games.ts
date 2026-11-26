@@ -1,12 +1,27 @@
 /** Browser recipe using an in-memory appearance fixture; never writes encounters or credits. */
 import assert from 'node:assert/strict'
-import { chromium, expect } from '@playwright/test'
+import { chromium, expect, type Locator, type Request } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 const browser = await chromium.launch()
 const target = new URL(process.env.SCOLO_TEST_URL ?? 'http://localhost:3104')
 assert.ok(['localhost','dev-scolo.marvinl.com'].includes(target.hostname), 'Only localhost or DEV is permitted.')
 const tokens: {game:string;token:string}[] = []
 const results: unknown[] = []
+
+async function checkPublicTab(dialog: Locator, game: 'Coutelas' | 'Sandale') {
+  await expect(dialog.getByRole('tab', { name: game, exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(dialog.getByRole('button', { name: /rejouer|commencer|se connecter pour enregistrer/i })).toHaveCount(0)
+  await expect(dialog.getByRole('region', { name: 'Résultat de cette partie' })).toHaveCount(0)
+  await expect(dialog.getByRole('region', { name: 'Enregistrement de ta partie' })).toHaveCount(0)
+  const share = dialog.getByRole('button', { name: 'Partager le classement' })
+  await share.click()
+  const shareLink = await dialog.getByRole('link', { name: 'X / Twitter' }).getAttribute('href')
+  assert.ok(shareLink)
+  const destination = new URL(shareLink).searchParams.get('url')
+  assert.equal(destination, `https://scolo.marvinl.com/?classement=${game === 'Sandale' ? 1 : 3}`)
+  await share.click()
+}
+
 try {
  for (const viewport of [{width:1440,height:1100},{width:390,height:844}]) for (const game of ['digrain','coutelas']) {
 
@@ -125,6 +140,33 @@ try {
    await expect(result.getByText('Ton score', { exact: true })).toBeVisible()
    await expect(result.getByText('0 pts', { exact: true })).toBeVisible()
    await expect(result.getByText(/^#\d+$/)).toBeVisible({ timeout: 15000 })
+   const savedRank = await result.getByText(/^#\d+$/).innerText()
+   const popup = page.getByRole('dialog')
+   await expect(popup.getByRole('tab', {name:'Coutelas', exact:true})).toHaveAttribute('aria-selected','true')
+   const archiveWrites: string[] = []
+   const trackArcadeActions = (request: Request) => {
+     const procedures = new URL(request.url()).pathname.split('/api/trpc/')[1]?.split(',') ?? []
+     archiveWrites.push(...procedures.filter(procedure => /^arcade\.(start|finish|restore|claim|reward)$/.test(procedure)))
+   }
+   // Observe the first archive read in this fresh browser context, including tRPC batches.
+   const archiveRead = page.waitForResponse(response => {
+     const url = new URL(response.url())
+     const procedures = url.pathname.split('/api/trpc/')[1]?.split(',') ?? []
+     const index = procedures.indexOf('arcade.standings')
+     if (index < 0 || !response.ok()) return false
+     const input = JSON.parse(url.searchParams.get('input') ?? '{}')
+     const args = url.searchParams.has('batch') ? input[index]?.json : input.json
+     return args?.game === 'sandale' && args.view === 'records'
+   })
+   page.on('request', trackArcadeActions)
+   await popup.getByRole('tab', {name:'Sandale', exact:true}).click()
+   await archiveRead
+   await checkPublicTab(popup, 'Sandale')
+   page.off('request', trackArcadeActions)
+   assert.deepEqual(archiveWrites, [])
+   await popup.getByRole('tab', {name:'Coutelas', exact:true}).click()
+   await expect(result.getByText(savedRank, {exact:true})).toBeVisible()
+   await expect(result.getByText('0 pts', {exact:true})).toBeVisible()
    await ranking.getByRole('button', {name:'Rejouer', exact:true}).click()
    await expect(ranking).not.toBeVisible()
    await expect(board).toHaveAttribute('data-mode', 'playing')
@@ -140,7 +182,22 @@ try {
   await dialog.getByRole('button',{name:'Fermer le mini-jeu'}).click();await expect(dialog).not.toBeVisible()
   await expect(trigger).toBeFocused()
   await page.goto(new URL(`/?classement=${game==='digrain'?2:3}`,target).href)
-  await expect(page.getByRole('dialog',{name:/Classement :/})).toBeVisible()
+  const records = page.getByRole('dialog')
+  await expect(records).toBeVisible()
+  if (game === 'coutelas') {
+    await checkPublicTab(records, 'Coutelas')
+    await records.getByRole('tab', {name:'Coutelas', exact:true}).press('ArrowRight')
+    await expect(records.getByRole('tab', {name:'Sandale', exact:true})).toBeFocused()
+    await checkPublicTab(records, 'Sandale')
+    await expect(page).toHaveURL(new URL('/?classement=1', target).href)
+    await page.goto(new URL('/?classement=1', target).href)
+    await checkPublicTab(records, 'Sandale')
+    await records.getByRole('tab', {name:'Coutelas', exact:true}).click()
+    await checkPublicTab(records, 'Coutelas')
+    await expect(page).toHaveURL(new URL('/?classement=3', target).href)
+  } else {
+    await expect(records).toHaveAccessibleName('Classement : Digrain')
+  }
   results.push({game,viewport,errors,overflow});await page.close()
  }
  console.log(JSON.stringify({target:target.origin,simulatedAppearance:true,results},null,2))

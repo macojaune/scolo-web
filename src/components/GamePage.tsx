@@ -7,7 +7,7 @@ import SandaleEasterEgg from '~/components/sandale/SandaleEasterEgg'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import SandaleLeaderboard from '~/components/sandale/SandaleLeaderboard'
-import { leaderboardGame, SANDALE_LEADERBOARD_PATH } from '~/game/arcade-links'
+import { leaderboardGame, leaderboardIds, leaderboardPath } from '~/game/arcade-links'
 import EncounterHistory from '~/components/EncounterHistory'
 import PredictionGame from '~/components/PredictionGame'
 import ZikakLabel from '~/components/ZikakLabel'
@@ -28,10 +28,11 @@ export default function GamePage() {
   const router = useRouter()
   const recordsGame = router.isReady ? leaderboardGame(router.query.classement) : null
   const recordsOpen = recordsGame !== null
-  function closeRecords() {
+  function changeRecords(next: 'coutelas' | 'sandale' | null) {
     if (!recordsOpen) return
     const query = { ...router.query }
-    delete query.classement
+    if (next) query.classement = leaderboardIds[next]
+    else delete query.classement
     void router.replace({ pathname: router.pathname, query, hash: router.asPath.split('#')[1] }, undefined, { shallow: true, scroll: false })
   }
   const { isLoaded, isSignedIn, userId } = useAuth()
@@ -204,13 +205,14 @@ export default function GamePage() {
           </p>
           <p className="footer-details">
             <span>Parie avec des points fictifs. Aucun argent réel.</span>
-            <Link href={SANDALE_LEADERBOARD_PATH} shallow scroll={false} aria-haspopup="dialog">Classement de la sandale</Link>
-            <Link href="/?classement=2" shallow scroll={false} aria-haspopup="dialog">Classement Digrain</Link>
-            <Link href="/?classement=3" shallow scroll={false} aria-haspopup="dialog">Classement du coutelas</Link>
+            <Link href={leaderboardPath('sandale')} shallow scroll={false} aria-haspopup="dialog">Classement de la sandale</Link>
+            <Link href={leaderboardPath('digrain')} shallow scroll={false} aria-haspopup="dialog">Classement Digrain</Link>
+            <Link href={leaderboardPath('coutelas')} shallow scroll={false} aria-haspopup="dialog">Classement du coutelas</Link>
             <Link href="/confidentialite">Confidentialité</Link>
           </p>
         </footer>
-        <SandaleLeaderboard key={recordsGame ?? 'sandale'} game={recordsGame ?? 'sandale'} view="records" open={recordsOpen} onClose={closeRecords} />
+        <SandaleLeaderboard game={recordsGame ?? 'sandale'} view="records" open={recordsOpen}
+          onRecordsGameChange={changeRecords} onClose={() => changeRecords(null)} />
       </div>
     </div>
   )
