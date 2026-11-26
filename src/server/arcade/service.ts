@@ -44,7 +44,7 @@ export async function createArcadeService(client: Client, now = () => Date.now()
         const seed = randomInt(1, 2147483647)
         const id = randomUUID()
         await tx.execute({ sql: 'INSERT INTO scolo_arcade_runs (id, token_hash, rules, seed, started_at, rate_key, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [id, hash(token), rules, seed, now(), rateKey, userId] })
-        return { token, seed, rules }
+        return { id, token, seed, rules }
       })
     },
     async finish(input: FinishedRun, userId: string | null) {
@@ -60,6 +60,7 @@ export async function createArcadeService(client: Client, now = () => Date.now()
       if (game === 'sandale') {
         const run = createRun(Number(row.seed))
         for (const action of input.actions) {
+          if (action.tap) throw new ArcadeError('BAD_REQUEST', 'Ce geste ne correspond pas à la sandale.')
           if (action.at < run.elapsedMs || action.at > input.elapsedMs) throw new ArcadeError('BAD_REQUEST', 'Ordre des coups invalide.')
           advanceRun(run, action.at - run.elapsedMs)
           const result = strike(run, action.bugId)

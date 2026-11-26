@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { advanceRun, createRun } from '../src/game/sandale/engine'
+import { MAX_TIME } from '../src/game/weapons/engine'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,4 +67,80 @@ test('records are read-only and ignore the latest result cookie', async () => {
   assert.equal(latest.total, 1)
   assert.deepEqual((await client.execute('SELECT * FROM scolo_arcade_runs ORDER BY id')).rows, before)
   await assert.rejects(visitor.standings({ viewerId: 'another-viewer', view: 'records' }), code('UNAUTHORIZED'))
+})
+
+test('coutelas v3 accepts timed taps through the router and rejects the previous controls', async () => {
+  const visitor = arcadeRouter.createCaller({ req: request(), userId: null, isAdmin: false })
+  const session = await visitor.start({ game: 'coutelas' })
+  assert.equal(session.rules, 'coutelas-v3')
+  const client = getDatabaseClient(env)
+  const tokenHash = createHash('sha256').update(session.token).digest('hex')
+  await client.execute({
+    sql: 'UPDATE scolo_arcade_runs SET started_at=? WHERE token_hash=?',
+    args: [Date.now() - MAX_TIME, tokenHash],
+  })
+  const payload = { game: 'coutelas', token: session.token, elapsedMs: MAX_TIME } as const
+  await assert.rejects(visitor.finish({ ...payload, actions: [{ at: 0, angle: 90, power: 50 }] }), code('BAD_REQUEST'))
+  const actions = [{ at: 0, tap: true }, { at: 200, tap: true }] as const
+  const result = await visitor.finish({ ...payload, actions: [...actions] })
+  assert.equal(result.elapsedMs, MAX_TIME)
+  assert.equal((await visitor.restore({ game: 'coutelas', token: session.token }))?.id, result.id)
+  // Both taps must survive request parsing and participate in replay identity.
+  await assert.rejects(visitor.finish({ ...payload, actions: [] }), code('BAD_REQUEST'))
+})
+
+test('previous coutelas results stay archived when the visitor opens the new game', async () => {
+  const req = request()
+  const viewerId = 'previous-player'
+  const game = 'coutelas'
+  const visitor = arcadeRouter.createCaller({ req, userId: viewerId, isAdmin: false })
+  const { token } = await visitor.start({ game })
+  const client = getDatabaseClient(env)
+  const tokenHash = createHash('sha256').update(token).digest('hex')
+  const archivedRun = await client.execute({
+    sql: `UPDATE scolo_arcade_runs SET rules='coutelas-v2', elapsed_ms=30000, crushed=1, points=300,
+          payload_hash='historical-payload', claimed_by=?, claimed_at=30000 WHERE token_hash=? RETURNING id`,
+    args: [viewerId, tokenHash],
+  })
+  await client.execute({
+    sql: `INSERT INTO scolo_arcade_bests (rules, user_id, display_name, elapsed_ms, crushed, points, claimed_at, run_id)
+          VALUES ('coutelas-v2', ?, 'Ancien joueur', 30000, 1, 300, 30000, ?)`,
+    args: [viewerId, String(archivedRun.rows[0]!.id)],
+  })
+  req.cookies.scolo_arcade_latest_coutelas = token
+  req.cookies.scolo_arcade_pending_coutelas = token
+  assert.equal(await visitor.pending({ game, viewerId }), null)
+  assert.equal(await visitor.restore({ game, token }), null)
+  await assert.rejects(visitor.finish({ game, token, elapsedMs: 30000, actions: [] }), code('NOT_FOUND'))
+  const standings = await visitor.standings({ game, viewerId })
+  assert.equal(standings.sessionId, null)
+  assert.deepEqual(standings.entries, [])
+  const archived = await client.execute("SELECT points FROM scolo_arcade_bests WHERE rules='coutelas-v2' AND user_id='previous-player'")
+  assert.equal(archived.rows[0]?.points, 300)
+})
+
+test('private standings use the requested finished run across tabs and check ownership and game', async () => {
+  const req = request()
+  const viewerId = 'finisher'
+  const owner = arcadeRouter.createCaller({ req, userId: viewerId, isAdmin: false })
+  const guest = arcadeRouter.createCaller({ req, userId: null, isAdmin: false })
+  const game = 'coutelas'
+  const first = await owner.start({ game })
+  const second = await guest.start({ game })
+  const args = { game, viewerId, token: first.token } as const
+  await assert.rejects(owner.runStandings(args), code('NOT_FOUND'))
+  const client = getDatabaseClient(env)
+  await client.execute({ sql: 'UPDATE scolo_arcade_runs SET started_at=? WHERE id IN (?, ?)', args: [Date.now() - MAX_TIME - 1000, first.id, second.id] })
+  await owner.finish({ game, token: first.token, elapsedMs: MAX_TIME, actions: [] })
+  await guest.finish({ game, token: second.token, elapsedMs: MAX_TIME, actions: [] })
+  req.cookies.scolo_arcade_latest_coutelas = second.token
+  assert.equal((await owner.standings({ viewerId, game })).sessionId, second.id)
+  const current = await owner.runStandings(args)
+  assert.equal(current.sessionId, first.id)
+  assert.equal(current.me?.isCurrentRun, true)
+  assert.equal((await owner.runStandings({ ...args, offset: 0 })).sessionId, first.id)
+  assert.equal((await guest.runStandings({ game, token: second.token, viewerId: null })).sessionId, second.id)
+  await assert.rejects(guest.runStandings({ ...args, viewerId: null }), code('NOT_FOUND'))
+  await assert.rejects(owner.runStandings({ ...args, viewerId: 'impostor' }), code('UNAUTHORIZED'))
+  await assert.rejects(owner.runStandings({ ...args, game: 'digrain' }), code('NOT_FOUND'))
 })

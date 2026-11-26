@@ -19,10 +19,14 @@ try {
   await page.goto(new URL('/?source=navigation-check&classement=1#rencontres', target).href, { waitUntil: 'domcontentloaded' })
   const dialog = page.getByRole('dialog', { name: 'Le classement' })
   await expect(dialog).toBeVisible({ timeout: 30000 })
+  await expect(dialog.getByRole('tab', { name: 'Sandale', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page).toHaveURL(url => url.searchParams.get('classement') === 'sandale'
+    && url.searchParams.get('source') === 'navigation-check' && url.hash === '#rencontres')
   await dialog.getByRole('button', { name: 'Fermer le classement' }).click()
   await expect(dialog).not.toBeVisible()
   await expect(page).toHaveURL(new URL('/?source=navigation-check#rencontres', target).href)
   const footer = page.getByRole('link', { name: 'Classement de la sandale' })
+  await expect(footer).toHaveAttribute('href', '/?classement=sandale')
   await footer.click()
   await expect(dialog).toBeVisible()
   for (let cycle = 0; cycle < 3; cycle++) {
@@ -34,7 +38,7 @@ try {
     // Replay the previous native close arriving late, after Forward has reopened the dialog.
     await dialog.evaluate(node => node.dispatchEvent(new Event('close')))
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await expect(page).toHaveURL(new URL('/?classement=1', target).href)
+    await expect(page).toHaveURL(new URL('/?classement=sandale', target).href)
     await expect(dialog).toBeVisible()
     await expect(page.locator('dialog[open]')).toHaveCount(1)
   }

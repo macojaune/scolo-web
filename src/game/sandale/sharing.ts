@@ -25,7 +25,12 @@ export function shareMessage(board?: ShareBoard, game: ArcadeGame = 'sandale') {
     : 'Le classement de BÈT a milpat 👀 Qui tient le plus longtemps avec la sandale ?'
 }
 export function shareLinks(board?: ShareBoard, url = GAME_SHARE_URL, game: ArcadeGame = 'sandale') {
-  const text = shareMessage(board, game)
+  let text = shareMessage(board, game)
+  if (game === 'sandale' && url === LEADERBOARD_SHARE_URL) {
+    text = board?.me
+      ? `J’ai tenu ${shareDuration(board.me.elapsedMs)} à la sandale sur BÈT a milpat. Mon record est classé n° ${board.me.rank}.`
+      : 'Retrouve les records de la sandale sur BÈT a milpat.'
+  }
   return {
     x: `https://x.com/intent/tweet?${new URLSearchParams({ text, url })}`,
     whatsapp: `https://wa.me/?${new URLSearchParams({ text: `${text}\n${url}` })}`,

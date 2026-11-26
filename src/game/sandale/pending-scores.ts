@@ -1,4 +1,4 @@
-import type { ArcadeGame } from '../weapons/catalog'
+import { weaponRulesVersion, type ArcadeGame } from '../weapons/catalog'
 import { finishInput, type FinishedRun } from './protocol'
 
 export const SCORE_QUEUE_EVENT = 'scolo:sandale-score-queue'
@@ -6,7 +6,7 @@ export const AUTH_RETURN_KEY = 'scolo:sandale-auth-return:v3'
 const KEY = 'scolo:sandale-pending:v3'
 export type PendingScore = { token: string; id?: string; submission?: FinishedRun }
 const fallbacks = new Map<ArcadeGame, PendingScore[]>()
-const storageKey = (game: ArcadeGame) => game === 'sandale' ? KEY : `scolo:${game}:pending:v1`
+const storageKey = (game: ArcadeGame) => game === 'sandale' ? KEY : `scolo:${game}:pending:v${weaponRulesVersion[game]}`
 
 export function pendingScores(game: ArcadeGame = 'sandale'): PendingScore[] {
   let stored: PendingScore[] = []

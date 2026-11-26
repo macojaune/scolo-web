@@ -1,25 +1,83 @@
 /** Shared deterministic simulations. Fixed 20 ms steps are replayed on the server. */
 export type WeaponGame = 'digrain' | 'coutelas'
-export type Input = { at: number; x?: number; fire?: boolean; angle?: number; power?: number }
+export type Input = { at: number; x?: number; fire?: boolean; angle?: number; power?: number; tap?: true }
 export type Target = { id: number; x: number; y: number }
-export type Shot = { x: number; y: number; vx: number; vy: number; age: number }
+type Point = { x: number; y: number }
+type CoutelasFlight = { landing: Point; duration: number; power: number }
+export type Shot = { x: number; y: number; vx: number; vy: number; age: number; height?: number; flight?: CoutelasFlight }
 export type WeaponRun = {
   game: WeaponGame; tick: number; random: number; status: 'running' | 'lost'; score: number;
   hits: number; lives: number; wave: number; targets: Target[]; shots: Shot[];
   marks: Target[]; x: number; fire: boolean; pressure: number; exhausted: boolean;
-  nextShot: number; nextWave: number; attempts: number; throws: number; nextTarget: number;
+  nextShot: number; nextWave: number; attempts: number; throws: number; landedThrows: number; nextTarget: number;
+  aimSince: number; lockedAngle: number | null; lastLanding: Point | null;
 }
 export const STEP = 20
 export const WIDTH = 320
 export const HEIGHT = 400
 export const MAX_TIME = 180000
+export const COUTELAS_ORIGIN = { x: 160, y: 370 } as const
+export function coutelasTargetRadius(hits: number) {
+  return Math.max(11, 17 - hits * 0.6)
+}
+
+type Aim = {
+  phase: 'angle' | 'power' | 'flight' | 'waiting'
+  angle: number
+  power: number
+  landing: Point
+  powerTimeLeftMs?: number
+}
+
+function powerTimeLeftMs(run: WeaponRun) {
+  const timeLimit = Math.max(3000, 6000 - run.score)
+  return Math.max(0, timeLimit - (run.tick - run.aimSince))
+}
+
+function oscillation(elapsedMs: number, halfPeriodMs: number) {
+  // A full cycle rises from 0 to 1, then returns to 0 at the same speed.
+  return 1 - Math.abs(1 - (elapsedMs % (2 * halfPeriodMs)) / halfPeriodMs)
+}
+
+function landingPoint(angle: number, power: number): Point {
+  const radians = angle * Math.PI / 180
+  const dx = Math.cos(radians)
+  const dy = -Math.sin(radians)
+  // At full power the marker reaches the visible edge along the chosen ray.
+  const margin = 10
+  const sideRange = (WIDTH / 2 - margin) / Math.abs(dx)
+  const topRange = (COUTELAS_ORIGIN.y - margin) / -dy
+  const distance = Math.min(sideRange, topRange) * power / 100
+  return { x: COUTELAS_ORIGIN.x + dx * distance, y: COUTELAS_ORIGIN.y + dy * distance }
+}
+
+export function coutelasAim(run: WeaponRun): Aim {
+  const elapsed = run.tick - run.aimSince
+  const sweepTime = Math.max(1320, 2600 - 140 * run.hits)
+  const chargeTime = Math.max(1020, 1900 - 90 * run.hits)
+  const angle = run.lockedAngle ?? 165 - 150 * oscillation(elapsed, sweepTime)
+  const flight = run.shots[0]?.flight
+  if (run.status === 'lost' || run.nextTarget) {
+    return { phase: 'waiting', angle, power: 0, landing: run.lastLanding ?? COUTELAS_ORIGIN }
+  }
+  if (flight) return { phase: 'flight', angle, power: flight.power, landing: flight.landing }
+  if (run.lockedAngle === null) return { phase: 'angle', angle, power: 100, landing: landingPoint(angle, 100) }
+  const power = 100 * oscillation(elapsed, chargeTime)
+  return { phase: 'power', angle, power, landing: landingPoint(angle, power), powerTimeLeftMs: powerTimeLeftMs(run) }
+}
+
 export function random(run: WeaponRun) {
   let n = run.random; n ^= n << 13; n ^= n >>> 17; n ^= n << 5;
   run.random = n >>> 0; return run.random / 4294967296
 }
 function target(run: WeaponRun) {
   run.targets = [{ id: run.hits + 1, x: 48 + random(run) * 224, y: 70 + random(run) * 180 }]
-  run.attempts = 3; run.throws = 0; run.marks = []
+  run.attempts = 3
+  run.throws = 0
+  run.marks = []
+  run.aimSince = run.tick
+  run.lockedAngle = null
+  run.lastLanding = null
 }
 function wave(run: WeaponRun) {
   run.wave++
@@ -28,24 +86,77 @@ function wave(run: WeaponRun) {
 export function createWeaponRun(game: WeaponGame, seed: number): WeaponRun {
   const run: WeaponRun = { game, tick: 0, random: seed || 1, status: 'running', score: 0, hits: 0,
     lives: 3, wave: 0, targets: [], shots: [], marks: [], x: 160, fire: false, pressure: 100,
-    exhausted: false, nextShot: 0, nextWave: 0, attempts: 3, throws: 0, nextTarget: 0 }
+    exhausted: false, nextShot: 0, nextWave: 0, attempts: 3, throws: 0, landedThrows: 0, nextTarget: 0, aimSince: 0, lockedAngle: null, lastLanding: null }
   if (game === 'coutelas') target(run); else wave(run)
   return run
 }
 export function weaponInput(run: WeaponRun, input: Input): boolean {
   if (run.status !== 'running') return false
   if (run.game === 'digrain') {
-    if (input.angle !== undefined || input.power !== undefined) return false
+    if (input.angle !== undefined || input.power !== undefined || input.tap !== undefined) return false
     if (input.x !== undefined) run.x = Math.max(18, Math.min(302, input.x))
     if (input.fire !== undefined) { run.fire = input.fire; if (!run.fire) run.exhausted = false }
     return true
   }
-  if (input.x !== undefined || input.fire !== undefined || input.angle === undefined || input.power === undefined || run.shots.length || run.nextTarget > run.tick) return false
-  if (input.angle < 15 || input.angle > 165 || input.power < 10 || input.power > 100) return false
-  const angle = input.angle * Math.PI / 180, speed = 140 + input.power * 3.2
-  run.shots.push({ x: 160, y: 370, vx: Math.cos(angle) * speed, vy: -Math.sin(angle) * speed, age: 0 })
-  run.throws++; return true
+  if (input.tap !== true || Object.keys(input).some(key => key !== 'at' && key !== 'tap')) return false
+  const aim = coutelasAim(run)
+  if (aim.phase === 'angle') {
+    run.lockedAngle = aim.angle
+    run.aimSince = run.tick
+    return true
+  }
+  if (aim.phase !== 'power' || run.tick === run.aimSince) return false
+  launchCoutelas(run, aim)
+  return true
 }
+
+function launchCoutelas(run: WeaponRun, aim: Aim) {
+  const { x, y } = COUTELAS_ORIGIN
+  const dx = aim.landing.x - x, dy = aim.landing.y - y
+  const duration = Math.round((480 + Math.hypot(dx, dy)) / STEP) * STEP
+  run.shots.push({ x, y, vx: dx * 1000 / duration, vy: dy * 1000 / duration, age: 0, height: 0,
+    flight: { duration, landing: aim.landing, power: aim.power } })
+  run.throws++
+}
+
+function stepCoutelas(run: WeaponRun) {
+  if (run.nextTarget && run.tick >= run.nextTarget) {
+    run.nextTarget = 0
+    target(run)
+  }
+  const shot = run.shots[0]
+  const flight = shot?.flight
+  if (!shot || !flight) {
+    if (run.lockedAngle !== null && powerTimeLeftMs(run) === 0) launchCoutelas(run, coutelasAim(run))
+    return
+  }
+
+  shot.age += STEP
+  const t = Math.min(1, shot.age / flight.duration)
+  const { landing } = flight
+  shot.x = COUTELAS_ORIGIN.x + (landing.x - COUTELAS_ORIGIN.x) * t
+  shot.y = COUTELAS_ORIGIN.y + (landing.y - COUTELAS_ORIGIN.y) * t
+  shot.height = 4 * t * (1 - t) * (20 + flight.power * 0.35)
+  if (t < 1) return
+
+  run.shots = []
+  run.landedThrows++
+  run.lockedAngle = null
+  run.aimSince = run.tick
+  run.lastLanding = landing
+  const bug = run.targets[0]!
+  if (Math.hypot(landing.x - bug.x, landing.y - bug.y) <= coutelasTargetRadius(run.hits)) {
+    run.hits++
+    run.score += (4 - run.throws) * 100
+    run.targets = []
+    run.nextTarget = run.tick + 500
+  } else {
+    run.marks.push({ id: run.throws, ...landing })
+    run.attempts--
+    if (!run.attempts) run.status = 'lost'
+  }
+}
+
 function step(run: WeaponRun) {
   run.tick += STEP
   if (run.game === 'digrain') {
@@ -69,21 +180,7 @@ function step(run: WeaponRun) {
     }
     if (!run.targets.length && run.tick >= run.nextWave && run.status === 'running') wave(run)
   } else {
-    if (run.nextTarget && run.tick >= run.nextTarget) { run.nextTarget = 0; target(run) }
-    const shot = run.shots[0], bug = run.targets[0]
-    if (shot && bug) {
-      // Substeps prevent fast blades from tunnelling through small targets.
-      for (let i = 0; i < 4 && run.shots.length; i++) {
-        shot.x += shot.vx * .005; shot.y += shot.vy * .005; shot.vy += 300 * .005; shot.age += 5
-        const radius = Math.max(9, 20 - run.hits * .6)
-        if (Math.hypot((shot.x - bug.x) / 1.6, shot.y - bug.y) <= radius) {
-          run.hits++; run.score += (4 - run.throws) * 100; run.shots = []; run.targets = []; run.nextTarget = run.tick + 500
-        } else if (shot.x < 0 || shot.x > WIDTH || shot.y > HEIGHT || shot.age >= 4000) {
-          run.marks.push({ id: run.throws, x: Math.max(8, Math.min(312, shot.x)), y: Math.max(12, Math.min(355, shot.y)) })
-          run.shots = []; run.attempts--; if (!run.attempts) run.status = 'lost'
-        }
-      }
-    }
+    stepCoutelas(run)
   }
   if (run.tick >= MAX_TIME) run.status = 'lost'
 }

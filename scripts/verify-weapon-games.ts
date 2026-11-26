@@ -1,29 +1,46 @@
 /** Browser recipe using an in-memory appearance fixture; never writes encounters or credits. */
 import assert from 'node:assert/strict'
-import { chromium, expect } from '@playwright/test'
+import { chromium, expect, type Locator, type Request } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 const browser = await chromium.launch()
 const target = new URL(process.env.SCOLO_TEST_URL ?? 'http://localhost:3104')
 assert.ok(['localhost','dev-scolo.marvinl.com'].includes(target.hostname), 'Only localhost or DEV is permitted.')
 const tokens: {game:string;token:string}[] = []
 const results: unknown[] = []
+
+async function checkPublicTab(dialog: Locator, game: 'Coutelas' | 'Sandale') {
+  await expect(dialog.getByRole('tab', { name: game, exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(dialog.getByRole('button', { name: /rejouer|commencer|se connecter pour enregistrer/i })).toHaveCount(0)
+  await expect(dialog.getByRole('region', { name: 'Résultat de cette partie' })).toHaveCount(0)
+  await expect(dialog.getByRole('region', { name: 'Enregistrement de ta partie' })).toHaveCount(0)
+  const share = dialog.getByRole('button', { name: 'Partager le classement' })
+  await share.click()
+  const shareLink = await dialog.getByRole('link', { name: 'X / Twitter' }).getAttribute('href')
+  assert.ok(shareLink)
+  const destination = new URL(shareLink).searchParams.get('url')
+  assert.equal(destination, `https://scolo.marvinl.com/?classement=${game.toLowerCase()}`)
+  await share.click()
+}
+
 try {
  for (const viewport of [{width:1440,height:1100},{width:390,height:844}]) for (const game of ['digrain','coutelas']) {
 
-  const page = await browser.newPage({ viewport })
+  const touch = viewport.width < 500
+  const page = await browser.newPage({ viewport, hasTouch: touch })
   const errors: string[] = []; page.on('pageerror',error=>errors.push(error.message))
   await page.addInitScript(() => localStorage.setItem('umami.disabled','1'))
-  await page.route('**/api/trpc/**', async route => {
-    try {
-    const path = new URL(route.request().url()).pathname
-    const response = await route.fetch()
-    if (path.endsWith('/arcade.start') && response.ok()) {
+  page.on('response', async response => {
+    if (new URL(response.url()).pathname.endsWith('/arcade.start') && response.ok()) {
       const body = await response.json()
       const token = (Array.isArray(body) ? body[0] : body)?.result?.data?.json?.token
       if (typeof token === 'string') tokens.push({game,token})
     }
+  })
+  await page.route('**/api/trpc/*app.game*', async route => {
     // An explicitly simulated appearance, in browser memory only. No appearance is written.
-    if (route.request().method() === 'GET' && path.includes('app.game')) {
+    if (route.request().method() !== 'GET') return route.continue()
+    try {
+      const response = await route.fetch()
       const body = await response.json()
       for(const item of Array.isArray(body) ? body : [body]) {
         const state = item?.result?.data?.json
@@ -32,16 +49,27 @@ try {
           state.history = [state.lastAppearance]
         }
       }
-      return route.fulfill({response,json:body})
-    }
-    await route.fulfill({response})
+      await route.fulfill({response,json:body})
     } catch { if (!page.isClosed()) await route.abort().catch(() => undefined) }
   })
   await page.goto(target.href, { waitUntil:'networkidle' })
   const trigger = page.getByRole('button',{name:game==='digrain'?'Jouer avec Digrain':'Jouer avec le coutelas',exact:true})
   await expect(trigger).toBeVisible({timeout:30000});await trigger.click()
   const dialog=page.getByRole('dialog',{name:`Mini-jeu : ${game==='digrain'?'Digrain':'le coutelas'}`,exact:true})
-  await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Commencer',exact:true}).click()
+  await expect(dialog).toBeVisible()
+  if (game === 'coutelas') {
+    const steps = dialog.getByRole('listitem')
+    await expect(steps).toHaveCount(2)
+    for (const [step, click, parameter] of [
+      [steps.nth(0), '1er clic', 'L’angle'],
+      [steps.nth(1), '2e clic', 'La puissance'],
+    ] as const) {
+      await expect(step).toContainText(click)
+      await expect(step).toContainText(parameter)
+      await expect(step.locator('svg').first()).toBeVisible()
+    }
+  }
+  await dialog.getByRole('button',{name:'Commencer',exact:true}).click()
   const board=dialog.getByTestId(`${game}-board`)
   await expect(board).toHaveAttribute('data-mode','playing',{timeout:20000})
   if(game==='digrain') {
@@ -51,9 +79,101 @@ try {
    await dialog.getByRole('button',{name:'Pause',exact:true}).click();await expect(board).toHaveAttribute('data-mode','paused')
    await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click();await expect(board).toHaveAttribute('data-mode','playing')
   } else {
-   await dialog.getByRole('slider',{name:/Angle/}).fill('15');await dialog.getByRole('slider',{name:/Puissance/}).fill('10')
-   await dialog.getByRole('button',{name:'Lancer',exact:true}).click()
-   await expect(dialog.getByText('2 lancers',{exact:true})).toBeVisible({timeout:8000})
+   const tapBoard = () => touch ? board.tap() : board.click()
+   const shotButton = dialog.getByRole('button', { name: /^(bloquer l[’']angle|lancer)$/i })
+   const guide = dialog.getByTestId('coutelas-guide')
+   const landing = dialog.getByTestId('coutelas-landing')
+   await expect(dialog.getByText('Touche le terrain ou appuie sur Espace. La visée accélère à chaque scolo touché.', { exact: true })).not.toBeVisible()
+   await expect(dialog).not.toContainText(/\d\s*°/)
+   for (let shot = 1; shot <= 3; shot++) {
+     const guided = shot <= 2
+     await expect(board).toHaveAttribute('data-phase', 'angle')
+     await expect(shotButton).toHaveCount(0)
+     await expect(guide).toBeVisible({ visible: guided })
+     if (shot === 1) {
+       // Aim at the left edge so the automatic shot misses at any power.
+       await page.waitForFunction(() =>
+         Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-angle')) >= 157)
+     }
+     await tapBoard()
+     await expect(board).toHaveAttribute('data-phase', 'power')
+     await expect(shotButton).toHaveCount(0)
+     await expect(guide).toBeVisible({ visible: guided })
+     await expect(landing).toBeVisible({ visible: guided })
+     if (shot === 1) {
+       await board.press('Escape')
+       await expect(board).toHaveAttribute('data-mode', 'paused')
+       const frozenPower = await board.getAttribute('data-power')
+       await page.waitForTimeout(250)
+       assert.equal(await board.getAttribute('data-power'), frozenPower)
+       await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click()
+       await expect(board).toHaveAttribute('data-mode', 'playing')
+       await expect(board).toHaveAttribute('data-phase', 'power')
+       // No second tap. Observe the short flight on the next animation frame.
+       await page.waitForFunction(() =>
+         document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-phase') === 'flight',
+       undefined, { timeout: 12000 })
+     } else {
+       // Throw manually at low power, well short of any target.
+       await page.waitForFunction(() => {
+         const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
+         return power >= 3 && power <= 10
+       })
+       await tapBoard()
+       await expect(board).toHaveAttribute('data-phase', 'flight')
+     }
+     await expect(landing).toBeVisible({ visible: guided })
+     if (shot < 3) await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(shot)
+   }
+   const ranking = page.getByRole('dialog', { name: 'Classement : le coutelas', exact: true })
+   const loss = dialog.getByTestId('coutelas-result')
+   await loss.waitFor({ state: 'visible' })
+   const lossShownAt = performance.now()
+   await expect(loss.getByRole('heading', { name: 'Perdu', exact: true })).toBeVisible()
+   await expect(loss.getByText('0 pts', { exact: true })).toBeVisible()
+   await expect(dialog.getByRole('button', { name: /^(Rejouer|Classement)$/ })).toHaveCount(0)
+   await expect(ranking).not.toBeVisible()
+   await ranking.waitFor({ state: 'visible', timeout: 4000 })
+   assert.ok(performance.now() - lossShownAt >= 1200, 'The loss and score should stay readable before the standings open')
+   await expect(dialog).not.toBeVisible()
+   const result = ranking.getByRole('region', { name: 'Résultat de cette partie' })
+   await expect(result.getByText('Ton score', { exact: true })).toBeVisible()
+   await expect(result.getByText('0 pts', { exact: true })).toBeVisible()
+   await expect(result.getByText(/^#\d+$/)).toBeVisible({ timeout: 15000 })
+   const savedRank = await result.getByText(/^#\d+$/).innerText()
+   const popup = page.getByRole('dialog')
+   await expect(popup.getByRole('tab', {name:'Coutelas', exact:true})).toHaveAttribute('aria-selected','true')
+   const archiveWrites: string[] = []
+   const trackArcadeActions = (request: Request) => {
+     const procedures = new URL(request.url()).pathname.split('/api/trpc/')[1]?.split(',') ?? []
+     archiveWrites.push(...procedures.filter(procedure => /^arcade\.(start|finish|restore|claim|reward)$/.test(procedure)))
+   }
+   // Observe the first archive read in this fresh browser context, including tRPC batches.
+   const archiveRead = page.waitForResponse(response => {
+     const url = new URL(response.url())
+     const procedures = url.pathname.split('/api/trpc/')[1]?.split(',') ?? []
+     const index = procedures.indexOf('arcade.standings')
+     if (index < 0 || !response.ok()) return false
+     const input = JSON.parse(url.searchParams.get('input') ?? '{}')
+     const args = url.searchParams.has('batch') ? input[index]?.json : input.json
+     return args?.game === 'sandale' && args.view === 'records'
+   })
+   page.on('request', trackArcadeActions)
+   await popup.getByRole('tab', {name:'Sandale', exact:true}).click()
+   await archiveRead
+   await checkPublicTab(popup, 'Sandale')
+   page.off('request', trackArcadeActions)
+   assert.deepEqual(archiveWrites, [])
+   await popup.getByRole('tab', {name:'Coutelas', exact:true}).click()
+   await expect(result.getByText(savedRank, {exact:true})).toBeVisible()
+   await expect(result.getByText('0 pts', {exact:true})).toBeVisible()
+   await ranking.getByRole('button', {name:'Rejouer', exact:true}).click()
+   await expect(ranking).not.toBeVisible()
+   await expect(board).toHaveAttribute('data-mode', 'playing')
+   await expect(board).toHaveAttribute('data-phase', 'angle')
+   await expect(guide).toBeVisible()
+   await tapBoard()
+   await expect(landing).toBeVisible()
   }
   await mkdir('.local',{recursive:true})
   await page.screenshot({path:`.local/${game}-${viewport.width}.png`,fullPage:true})
@@ -61,8 +181,23 @@ try {
   assert.equal(overflow,false);assert.deepEqual(errors,[])
   await dialog.getByRole('button',{name:'Fermer le mini-jeu'}).click();await expect(dialog).not.toBeVisible()
   await expect(trigger).toBeFocused()
-  await page.goto(new URL(`/?classement=${game==='digrain'?2:3}`,target).href)
-  await expect(page.getByRole('dialog',{name:/Classement :/})).toBeVisible()
+  await page.goto(new URL(`/?classement=${game}`,target).href)
+  const records = page.getByRole('dialog')
+  await expect(records).toBeVisible()
+  if (game === 'coutelas') {
+    await checkPublicTab(records, 'Coutelas')
+    await records.getByRole('tab', {name:'Coutelas', exact:true}).press('ArrowRight')
+    await expect(records.getByRole('tab', {name:'Sandale', exact:true})).toBeFocused()
+    await checkPublicTab(records, 'Sandale')
+    await expect(page).toHaveURL(new URL('/?classement=sandale', target).href)
+    await page.goto(new URL('/?classement=sandale', target).href)
+    await checkPublicTab(records, 'Sandale')
+    await records.getByRole('tab', {name:'Coutelas', exact:true}).click()
+    await checkPublicTab(records, 'Coutelas')
+    await expect(page).toHaveURL(new URL('/?classement=coutelas', target).href)
+  } else {
+    await expect(records).toHaveAccessibleName('Classement : Digrain')
+  }
   results.push({game,viewport,errors,overflow});await page.close()
  }
  console.log(JSON.stringify({target:target.origin,simulatedAppearance:true,results},null,2))

@@ -5,7 +5,16 @@ import { readSocialCardData, socialMetadata, unavailableSocialCardData, type Soc
 
 export type SocialPageProps = { social: SocialMetadata }
 
-export const getSocialPageProps: GetServerSideProps<SocialPageProps> = async () => {
+const legacyLeaderboards = new Map([['1', 'sandale'], ['2', 'digrain'], ['3', 'coutelas']])
+
+export const getSocialPageProps: GetServerSideProps<SocialPageProps> = async ({ query, resolvedUrl }) => {
+  const legacyGame = typeof query.classement === 'string' && legacyLeaderboards.get(query.classement)
+  if (legacyGame) {
+    const url = new URL(resolvedUrl, env.APP_URL)
+    url.searchParams.set('classement', legacyGame)
+    return { redirect: { destination: url.pathname + url.search, permanent: true } }
+  }
+
   let data = unavailableSocialCardData()
   try { data = await readSocialCardData(getDatabaseClient(env), env.SCOLO_WALLET_MODE) }
   catch { /* Metadata must remain available even when the game is temporarily unavailable. */ }

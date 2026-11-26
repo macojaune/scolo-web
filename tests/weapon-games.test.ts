@@ -4,40 +4,174 @@ import { createClient } from '@libsql/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { advanceWeapon, createWeaponRun, recordWeaponInput, replayWeapon, weaponInput, type Input, type WeaponGame } from '../src/game/weapons/engine'
+import { advanceWeapon, coutelasAim, COUTELAS_ORIGIN, createWeaponRun, recordWeaponInput, replayWeapon, STEP, weaponInput, type Input, type WeaponGame, type WeaponRun } from '../src/game/weapons/engine'
 import { createArcadeService } from '../src/server/arcade/service'
 import { prepareGameDatabase } from '../scripts/prepare-game-db'
 
 function missAll(seed: number) {
-  const run = createWeaponRun('coutelas', seed), actions: Input[] = []
+  const run = createWeaponRun('coutelas', seed)
+  const actions: Input[] = []
   while (run.status === 'running') {
-    if (!run.shots.length) {
-      const input = { at: run.tick, angle: 15, power: 10 }
-      assert.ok(weaponInput(run, input)); actions.push(input)
-    }
-    advanceWeapon(run, run.tick + 20)
+    if (!run.shots.length) assert.ok(recordWeaponInput(run, actions, { tap: true }))
+    advanceWeapon(run, run.tick + STEP)
   }
   return { run, actions }
 }
-test('coutelas replay preserves three misses, rejects early results and invalid launches', () => {
+
+test('coutelas replays timed taps and rejects preset angles, powers and premature confirmations', () => {
   const { run, actions } = missAll(42)
-  assert.equal(run.attempts, 0); assert.equal(run.marks.length, 3)
+  assert.equal(run.attempts, 0)
+  assert.equal(run.landedThrows, 3)
+  assert.equal(run.marks.length, 3)
+  assert.equal(actions.length, 6)
   assert.deepEqual(replayWeapon('coutelas', 42, actions, run.tick), run)
-  assert.throws(() => replayWeapon('coutelas', 42, actions, run.tick - 20))
+  assert.throws(() => replayWeapon('coutelas', 42, actions, run.tick - STEP))
   const initial = createWeaponRun('coutelas', 42)
-  assert.equal(weaponInput(initial, { at: 0, angle: 0, power: 100 }), false)
-  assert.equal(weaponInput(initial, { at: 0, angle: 90, power: 100 }), true)
   assert.equal(weaponInput(initial, { at: 0, angle: 90, power: 100 }), false)
+  assert.equal(weaponInput(initial, { at: 0, tap: true, power: 100 }), false)
+  assert.equal(weaponInput(initial, { at: 0, tap: true }), true)
+  assert.equal(weaponInput(initial, { at: 0, tap: true }), false)
+  assert.equal(weaponInput(createWeaponRun('digrain', 42), { at: 0, tap: true }), false)
 })
-test('coutelas targets are reachable and reward first-shot precision', () => {
-  for (let seed = 1; seed <= 20; seed++) {
-    let won = false
-    for (let angle = 25; angle <= 155 && !won; angle += 2) for (let power = 20; power <= 100 && !won; power += 2) {
-      const run = createWeaponRun('coutelas', seed)
-      weaponInput(run, { at: 0, angle, power }); advanceWeapon(run, 4000)
-      if (run.hits) { assert.equal(run.score, 300); won = true }
+
+test('angle sweeps both ways, stays locked while power cycles, and sweeps faster after hits', () => {
+  const run = createWeaponRun('coutelas', 42)
+  const initialAngle = coutelasAim(run).angle
+  const experienced = createWeaponRun('coutelas', 42)
+  experienced.hits = 10
+  advanceWeapon(run, 200)
+  advanceWeapon(experienced, 200)
+  assert.ok(coutelasAim(experienced).angle < coutelasAim(run).angle)
+  advanceWeapon(run, 2600)
+  assert.ok(coutelasAim(run).angle < 20)
+  advanceWeapon(run, 5200)
+  assert.equal(coutelasAim(run).angle, initialAngle)
+  assert.ok(weaponInput(run, { at: run.tick, tap: true }))
+  assert.equal(coutelasAim(run).power, 0)
+  advanceWeapon(run, 7100)
+  assert.equal(coutelasAim(run).angle, initialAngle)
+  assert.equal(coutelasAim(run).power, 100)
+  advanceWeapon(run, 9000)
+  assert.equal(coutelasAim(run).power, 0)
+})
+
+test('power expires at the current strength after a score-dependent delay measured from the angle tap', () => {
+  for (const [score, hits, delay] of [[0, 0, 6000], [1500, 5, 4500], [3000, 10, 3000], [9000, 30, 3000]] as const) {
+    const run = createWeaponRun('coutelas', 42)
+    run.score = score
+    run.hits = hits
+    advanceWeapon(run, 12000)
+    assert.equal(run.throws, 0)
+    assert.equal(coutelasAim(run).powerTimeLeftMs, undefined)
+    const actions: Input[] = []
+    assert.ok(recordWeaponInput(run, actions, { tap: true }))
+    assert.equal(coutelasAim(run).powerTimeLeftMs, delay)
+    const deadline = run.tick + delay
+    advanceWeapon(run, deadline - STEP)
+    assert.equal(coutelasAim(run).powerTimeLeftMs, STEP)
+    const expected = coutelasAim({ ...run, tick: deadline })
+    advanceWeapon(run, deadline)
+    const flight = coutelasAim(run)
+    assert.equal(flight.phase, 'flight')
+    assert.equal(flight.power, expected.power)
+    assert.deepEqual(flight.landing, expected.landing)
+    assert.equal(recordWeaponInput(run, actions, { tap: true }), false)
+    assert.equal(run.throws, 1)
+    assert.equal(actions.length, 1)
+  }
+})
+
+test('replay reproduces automatic launches with only the angle taps; a last-moment manual tap launches once', () => {
+  const run = createWeaponRun('coutelas', 42)
+  const actions: Input[] = []
+  while (run.status === 'running') {
+    if (coutelasAim(run).phase === 'angle') assert.ok(recordWeaponInput(run, actions, { tap: true }))
+    advanceWeapon(run, run.tick + STEP)
+  }
+  assert.equal(run.landedThrows, 3)
+  assert.equal(actions.length, 3)
+  assert.deepEqual(replayWeapon('coutelas', 42, actions, run.tick), run)
+
+  const manual = createWeaponRun('coutelas', 42)
+  assert.ok(weaponInput(manual, { at: 0, tap: true }))
+  advanceWeapon(manual, 6000 - STEP)
+  const chosen = coutelasAim(manual)
+  assert.ok(weaponInput(manual, { at: manual.tick, tap: true }))
+  advanceWeapon(manual, 6000)
+  assert.equal(manual.throws, 1)
+  assert.equal(manual.shots.length, 1)
+  assert.equal(coutelasAim(manual).power, chosen.power)
+})
+
+test('coutelas can fly over the target without scoring, and marks the previewed landing when it misses', () => {
+  const run = createWeaponRun('coutelas', 42)
+  advanceWeapon(run, 1300)
+  assert.equal(coutelasAim(run).angle, 90)
+  assert.ok(weaponInput(run, { at: run.tick, tap: true }))
+  advanceWeapon(run, 3200)
+  const aim = coutelasAim(run)
+  assert.equal(aim.angle, 90)
+  assert.equal(aim.power, 100)
+  assert.ok(weaponInput(run, { at: run.tick, tap: true }))
+  const flightStart = run.tick
+  const duration = run.shots[0]!.flight!.duration
+  const halfwayY = (COUTELAS_ORIGIN.y + aim.landing.y) / 2
+  run.targets = [{ id: 1, x: COUTELAS_ORIGIN.x, y: halfwayY }]
+  advanceWeapon(run, flightStart + duration / 2)
+  assert.equal(run.shots[0]!.y, halfwayY)
+  assert.ok(run.shots[0]!.height! > 0)
+  assert.equal(run.score, 0)
+  assert.equal(run.attempts, 3)
+  assert.equal(weaponInput(run, { at: run.tick, tap: true }), false)
+  advanceWeapon(run, flightStart + duration)
+  assert.equal(run.score, 0)
+  assert.equal(run.attempts, 2)
+  assert.deepEqual(run.marks[0], { id: 1, ...aim.landing })
+})
+
+function bestTiming(run: WeaponRun, errorAt: (aim: ReturnType<typeof coutelasAim>) => number) {
+  let bestTick = run.tick
+  let bestError = Infinity
+  // Search a complete sweep in legal input ticks on the actual aiming guide.
+  const deadline = coutelasAim(run).powerTimeLeftMs ?? Infinity
+  const maxWait = Math.min(5200, deadline - STEP)
+  for (let delta = STEP; delta <= maxWait; delta += STEP) {
+    const error = errorAt(coutelasAim({ ...run, tick: run.tick + delta }))
+    if (error < bestError) {
+      bestError = error
+      bestTick = run.tick + delta
     }
-    assert.ok(won, `reachable target for seed ${seed}`)
+  }
+  return bestTick
+}
+
+test('every generated target is reachable by the two timers at opening and maximum difficulty', () => {
+  for (const previousHits of [0, 30]) {
+    for (let seed = 1; seed <= 40; seed++) {
+      const run = createWeaponRun('coutelas', Math.imul(seed, 0x9e3779b9))
+      run.hits = previousHits
+      const previousScore = previousHits * 300
+      run.score = previousScore
+      const bug = run.targets[0]!
+      const targetAngle = Math.atan2(COUTELAS_ORIGIN.y - bug.y, bug.x - COUTELAS_ORIGIN.x) * 180 / Math.PI
+      advanceWeapon(run, bestTiming(run, aim => Math.abs(aim.angle - targetAngle)))
+      assert.ok(weaponInput(run, { at: run.tick, tap: true }))
+      advanceWeapon(run, bestTiming(run, aim => Math.hypot(aim.landing.x - bug.x, aim.landing.y - bug.y)))
+      const expectedLanding = coutelasAim(run).landing
+      assert.ok(weaponInput(run, { at: run.tick, tap: true }))
+      const impactTick = run.tick + run.shots[0]!.flight!.duration
+      advanceWeapon(run, impactTick - STEP)
+      assert.equal(run.score, previousScore)
+      assert.equal(run.landedThrows, 0)
+      advanceWeapon(run, impactTick)
+      assert.equal(run.score, previousScore + 300)
+      assert.equal(run.hits, previousHits + 1)
+      assert.equal(coutelasAim(run).phase, 'waiting')
+      assert.deepEqual(coutelasAim(run).landing, expectedLanding)
+      advanceWeapon(run, run.nextTarget)
+      assert.equal(run.throws, 0)
+      assert.equal(run.landedThrows, 1)
+    }
   }
 })
 test('Digrain pressure empties and only resumes firing after release, replay is deterministic', () => {
