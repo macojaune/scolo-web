@@ -30,7 +30,7 @@ Le déclencheur est actif seulement pour une dernière rencontre à la sandale e
 
 ## Classement et reprise après connexion
 
-Le lien « Classement de la sandale » dans le footer ouvre `/?classement=1` sans lancer de partie, y compris si la dernière arme utilisée n’est pas la sandale. Le paramètre identifie le mini-jeu : `1` reste associé à la sandale ; les valeurs `2`, `3`, etc. pourront être attribuées aux futurs jeux et n’ouvrent rien pour le moment. Cette vue commence à la première place et ne présente que les records, sans ajouter la dernière partie du navigateur ni réclamer de bonus. Elle reste consultable sans connexion. Fermer la modale retire le paramètre ; le lien direct, le rechargement et l’historique du navigateur sont pris en charge. Le partage de cette vue conserve le lien direct et génère l’image à partir des records.
+Le lien « Classement de la sandale » dans le footer ouvre `/?classement=sandale` sans lancer de partie, y compris si la dernière arme utilisée n’est pas la sandale. Cette vue commence à la première place et ne présente que les records, sans ajouter la dernière partie du navigateur ni réclamer de bonus. Elle reste consultable sans connexion. Fermer la modale retire le paramètre ; le lien direct, le rechargement et l’historique du navigateur sont pris en charge. Le partage de cette vue conserve le lien direct et génère l’image à partir des records.
 
 La régression de navigation se rejoue avec `SCOLO_TEST_URL=http://localhost:3092 node --import tsx scripts/verify-leaderboard-navigation.ts`, sur l’application démarrée. Le script accepte aussi DEV et refuse les mutations d’API. Il couvre trois allers-retours rapides dans l’historique, le rechargement, Échap, le fond de modale et le retour du focus au lien.
 

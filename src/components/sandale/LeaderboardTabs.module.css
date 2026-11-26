@@ -1,0 +1,25 @@
+.list {
+  margin-bottom: 16px;
+  padding: 3px;
+  border: 1px solid #38342a;
+  background: #20201e;
+}
+.tab {
+  width: 100%;
+  min-height: 44px;
+  color: #d4d4d4;
+  font-weight: 650;
+}
+.tab [data-tabs-label] {
+  color: #141414;
+}
+.indicator {
+  background: #facc15;
+}
+.list .tab:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
+}
+.list .tab[aria-selected="true"]:focus-visible {
+  outline-color: #141414;
+}
