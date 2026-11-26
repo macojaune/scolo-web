@@ -51,6 +51,14 @@
 .coutelasGame .curtain h4 { font-size:19px; }
 .coutelasGame .curtain p { font-size:12px; line-height:1.45; color:#e4dbcc; }
 .coutelasGame .curtain button { width:100%; }
+.coutelasGame .loss { gap:4px; padding-block:16px; }
+.coutelasGame .loss h4 { font-size:26px; }
+.coutelasGame .loss p { color:var(--yellow); font-size:18px; font-weight:650; }
+.coutelasGame:has(.loss) .powerReadout { visibility:hidden; }
+@media(prefers-reduced-motion:no-preference) {
+  .loss { animation:showLoss 180ms ease-out; }
+  @keyframes showLoss { from { opacity:0; } to { opacity:1; } }
+}
 .powerReadout {
   display:flex;
   align-items:center;

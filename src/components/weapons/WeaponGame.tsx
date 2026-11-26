@@ -10,6 +10,7 @@ import { CoutelasField, CoutelasInstructions, CoutelasPower } from './CoutelasFi
 import styles from './Weapons.module.css'
 
 const clone = (run: WeaponRun) => ({ ...run, targets: run.targets.map(t => ({ ...t })), shots: run.shots.map(t => ({ ...t })), marks: [...run.marks] })
+const COUTELAS_RESULT_MS = 2000
 export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: { game: Game; autoStart: boolean; onClose: () => void; onLeaderboard: (result?: CompletedWeaponScore) => void }) {
   const [frame, setFrame] = useState(() => createWeaponRun(game, 1))
   const [mode, setMode] = useState<'ready' | 'preparing' | 'playing' | 'paused' | 'over'>(autoStart ? 'preparing' : 'ready')
@@ -47,15 +48,21 @@ export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: 
       if (run.current.status === 'lost') {
         const elapsedMs = run.current.tick
         queueScore({ token: session.current.token, elapsedMs, actions: [...actions.current] }, game)
-        if (game === 'coutelas') onLeaderboard({ id: session.current.id, token: session.current.token, elapsedMs, points: run.current.score })
-        else setMode('over')
+        setMode('over')
         return
       }
       request = requestAnimationFrame(tick)
     }
     request = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(request)
-  }, [mode, game, paint, onLeaderboard])
+  }, [mode, game, paint])
+  useEffect(() => {
+    if (game !== 'coutelas' || mode !== 'over') return
+    const { id, token } = session.current
+    const result = { id, token, elapsedMs: run.current.tick, points: run.current.score }
+    const timer = window.setTimeout(() => onLeaderboard(result), COUTELAS_RESULT_MS)
+    return () => window.clearTimeout(timer)
+  }, [game, mode, onLeaderboard])
   const start = useCallback(async () => {
     setMode('preparing'); setError(null)
     try {
@@ -80,6 +87,7 @@ export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: 
     setMode('playing')
   }
   const aim = game === 'coutelas' ? coutelasAim(frame) : null
+  const showLoss = game === 'coutelas' && mode === 'over'
   const tutorial = game === 'coutelas' && (mode === 'ready' || (mode === 'preparing' && !autoStart))
   const label = game === 'digrain' ? 'Invasion au Digrain' : 'Le coutelas'
   const score = gameScore(game, { elapsedMs: frame.tick, crushed: frame.hits, points: frame.score })
@@ -132,7 +140,11 @@ export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: 
           <image href="/digrain.png" x={frame.x - 16} y="352" width="32" height="46" />
         </>}
       </svg>
-      {mode !== 'playing' && <div className={tutorial ? styles.tutorial : styles.curtain}>
+      {showLoss && <div className={`${styles.curtain} ${styles.loss}`} data-testid="coutelas-result">
+        <h4>Perdu</h4>
+        <p>{score}</p>
+      </div>}
+      {mode !== 'playing' && !showLoss && <div className={tutorial ? styles.tutorial : styles.curtain}>
         <h4>{mode === 'over' ? 'Fin de partie' : mode === 'paused' ? 'Pause' : tutorial ? 'Deux clics pour lancer' : label}</h4>
         {tutorial && <><CoutelasInstructions /><p className={styles.guideNote}>Viseur et pointillés pour les deux premiers lancers.</p></>}
         {mode === 'over' && <p>{score}</p>}
@@ -146,9 +158,9 @@ export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: 
       <label>Pression : {Math.round(frame.pressure)} %<meter value={frame.pressure} min="0" max="100" /></label>
       <label>Position<input type="range" min="18" max="302" value={frame.x} disabled={mode !== 'playing'} onChange={event => input({ x: Number(event.target.value) })} /></label>
       <button type="button" disabled={mode !== 'playing'} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); input({ fire: true }) }} onPointerUp={() => input({ fire: false })} onPointerCancel={() => input({ fire: false })} onKeyDown={event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); input({ fire: true }) } }} onKeyUp={event => { if ([' ', 'Enter'].includes(event.key)) input({ fire: false }) }}>Pulvériser</button>
-    </div> : aim && mode === 'playing' && <CoutelasPower aim={aim} />}
+    </div> : aim && (mode === 'playing' || showLoss) && <CoutelasPower aim={aim} />}
     <p id={instructions} className={aim ? styles.srOnly : styles.instructions}>{aim ? 'Espace ou Entrée pour bloquer l’angle, puis une deuxième fois pour lancer.' : 'Clavier : flèches pour viser, espace pour tirer. Trois minutes maximum.'}</p>
-    <span role="status" className={styles.srOnly}>{mode === 'over' ? 'Partie terminée.' : mode === 'paused' ? 'Partie en pause.' : mode === 'playing' && aim ? (
+    <span role="status" className={styles.srOnly}>{showLoss ? `Perdu. ${score}.` : mode === 'over' ? 'Partie terminée.' : mode === 'paused' ? 'Partie en pause.' : mode === 'playing' && aim ? (
       aim.phase === 'power' ? 'Angle bloqué. Choisis ta puissance.' : aim.phase === 'flight' ? 'En vol.' : aim.phase === 'waiting' ? 'Touché !' : frame.marks.length ? `Raté. ${frame.attempts > 1 ? 'Deux essais' : 'Un essai'}. Choisis ton angle.` : 'Choisis ton angle.'
     ) : ''}</span>
   </section>
