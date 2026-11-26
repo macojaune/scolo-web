@@ -51,20 +51,58 @@
 .coutelasGame .curtain h4 { font-size:19px; }
 .coutelasGame .curtain p { font-size:12px; line-height:1.45; color:#e4dbcc; }
 .coutelasGame .curtain button { width:100%; }
-.timingControls {
-  display:grid;
-  gap:7px;
-  margin:12px auto 0;
+.powerReadout {
+  display:flex;
+  align-items:center;
+  gap:10px;
   max-width:320px;
+  margin:10px auto 0;
+  color:#e4dbcc;
+  font-size:12px;
+  font-variant-numeric:tabular-nums;
 }
-.readouts { display:flex; justify-content:space-between; gap:12px; color:#c2bcb2; font-size:12px; }
-.readouts span { display:flex; align-items:baseline; gap:5px; }
-.readouts b { color:#fff; font-size:14px; line-height:1.2; font-variant-numeric:tabular-nums; }
-.readouts .activeReadout, .readouts .activeReadout b { color:var(--yellow); }
-.powerTrack { overflow:hidden; height:4px; border-radius:2px; background:#49443a; }
+.powerReadout > span:last-child { min-width:4ch; text-align:right; }
+.powerTrack { flex:1; overflow:hidden; height:4px; border-radius:2px; background:#49443a; }
 .powerTrack span { display:block; height:100%; background:var(--yellow); transform-origin:left; }
-.game .timingControls button[aria-disabled="true"] { background:#39352c; color:#f1dbab; cursor:default; }
-.coutelasGame .instructions { max-width:320px; margin-inline:auto; }
+.tutorialArena { display:grid; }
+.tutorialArena > svg, .tutorial { grid-area:1/1; }
+.tutorialArena > svg { align-self:center; }
+.tutorial {
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:stretch;
+  gap:18px;
+  padding:16px;
+  border:1px solid #534736;
+  border-radius:6px;
+  background:#201d19;
+}
+.tutorial h4 { margin:0; color:#fff4db; font-size:22px; line-height:1.1; letter-spacing:-.025em; }
+.throwSteps { display:grid; gap:16px; margin:0; padding:0; list-style:none; }
+.throwSteps li { display:grid; grid-template-columns:minmax(62px, .85fr) 1.45fr; align-items:center; gap:12px; }
+.throwSteps li + li { padding-top:16px; border-top:1px solid #4d4539; }
+.throwDiagram { display:block; width:100%; height:auto; }
+.throwSteps li span { display:block; color:var(--yellow); font-size:12px; font-weight:650; }
+.throwSteps li strong { display:block; margin:2px 0 4px; color:#fff; font-size:18px; line-height:1.1; }
+.throwSteps li p { margin:0; color:#ded7c9; font-size:13px; line-height:1.35; }
+.guideNote { margin:0; color:#ded7c9; font-size:12px; line-height:1.4; }
+.demoArrow { transform:rotate(23deg); animation:showDirection 2.8s ease-in-out infinite; }
+.demoReticle { transform:translate(18px,-42px); animation:showPower 2.8s ease-in-out infinite; }
+@keyframes showDirection {
+  0%, 100% { transform:rotate(-54deg); }
+  43%, 55% { transform:rotate(23deg); }
+  72% { transform:rotate(54deg); }
+}
+@keyframes showPower {
+  0%, 100% { transform:translate(4px,-9.3px); }
+  43%, 55% { transform:translate(18px,-42px); }
+  72% { transform:translate(24px,-56px); }
+}
+@media(prefers-reduced-motion:reduce) {
+  .demoArrow, .demoReticle { animation:none; }
+}
 @media(max-height:560px) {
   .coutelasGame .arena { width:min(100%,235px); }
 }

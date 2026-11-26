@@ -42,7 +42,20 @@ try {
   const trigger = page.getByRole('button',{name:game==='digrain'?'Jouer avec Digrain':'Jouer avec le coutelas',exact:true})
   await expect(trigger).toBeVisible({timeout:30000});await trigger.click()
   const dialog=page.getByRole('dialog',{name:`Mini-jeu : ${game==='digrain'?'Digrain':'le coutelas'}`,exact:true})
-  await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Commencer',exact:true}).click()
+  await expect(dialog).toBeVisible()
+  if (game === 'coutelas') {
+    const steps = dialog.getByRole('listitem')
+    await expect(steps).toHaveCount(2)
+    for (const [step, click, parameter] of [
+      [steps.nth(0), '1er clic', 'L’angle'],
+      [steps.nth(1), '2e clic', 'La puissance'],
+    ] as const) {
+      await expect(step).toContainText(click)
+      await expect(step).toContainText(parameter)
+      await expect(step.locator('svg').first()).toBeVisible()
+    }
+  }
+  await dialog.getByRole('button',{name:'Commencer',exact:true}).click()
   const board=dialog.getByTestId(`${game}-board`)
   await expect(board).toHaveAttribute('data-mode','playing',{timeout:20000})
   if(game==='digrain') {
@@ -52,27 +65,46 @@ try {
    await dialog.getByRole('button',{name:'Pause',exact:true}).click();await expect(board).toHaveAttribute('data-mode','paused')
    await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click();await expect(board).toHaveAttribute('data-mode','playing')
   } else {
-   const action = dialog.getByTestId('coutelas-action')
-   await expect(board).toHaveAttribute('data-phase', 'angle')
-   if (touch) await board.tap()
-   else await action.press('Enter')
-   await expect(board).toHaveAttribute('data-phase', 'power')
-   await expect(dialog.getByTestId('coutelas-landing')).toBeVisible()
-   // Throw at low power, well short of any target.
-   await page.waitForFunction(() => {
-     const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
-     return power >= 3 && power <= 10
-   })
-   if (touch) await action.tap()
-   else await action.click()
-   await expect(board).toHaveAttribute('data-phase', 'flight')
-   await expect(board).toHaveAttribute('data-phase', 'angle')
-   await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(1)
-   await expect(dialog.getByText('2 lancers',{exact:true})).toBeVisible({timeout:8000})
-   await action.press('Escape')
-   await expect(board).toHaveAttribute('data-mode', 'paused')
-   await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click()
+   const tapBoard = () => touch ? board.tap() : board.click()
+   const shotButton = dialog.getByRole('button', { name: /^(bloquer l[’']angle|lancer)$/i })
+   const guide = dialog.getByTestId('coutelas-guide')
+   const landing = dialog.getByTestId('coutelas-landing')
+   await expect(dialog.getByText('Touche le terrain ou appuie sur Espace. La visée accélère à chaque scolo touché.', { exact: true })).not.toBeVisible()
+   await expect(dialog).not.toContainText(/\d\s*°/)
+   for (let shot = 1; shot <= 3; shot++) {
+     const guided = shot <= 2
+     await expect(board).toHaveAttribute('data-phase', 'angle')
+     await expect(shotButton).toHaveCount(0)
+     await expect(guide).toBeVisible({ visible: guided })
+     await tapBoard()
+     await expect(board).toHaveAttribute('data-phase', 'power')
+     await expect(shotButton).toHaveCount(0)
+     await expect(guide).toBeVisible({ visible: guided })
+     await expect(landing).toBeVisible({ visible: guided })
+     // Throw at low power, well short of any target.
+     await page.waitForFunction(() => {
+       const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
+       return power >= 3 && power <= 10
+     })
+     await tapBoard()
+     await expect(board).toHaveAttribute('data-phase', 'flight')
+     await expect(landing).toBeVisible({ visible: guided })
+     await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(shot)
+     if (shot === 1) {
+       await expect(dialog.getByText('2 lancers',{exact:true})).toBeVisible()
+       await board.press('Escape')
+       await expect(board).toHaveAttribute('data-mode', 'paused')
+       await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click()
+       await expect(board).toHaveAttribute('data-mode', 'playing')
+     }
+   }
+   await expect(board).toHaveAttribute('data-mode', 'over')
+   await dialog.getByRole('button', {name:'Rejouer', exact:true}).click()
    await expect(board).toHaveAttribute('data-mode', 'playing')
+   await expect(board).toHaveAttribute('data-phase', 'angle')
+   await expect(guide).toBeVisible()
+   await tapBoard()
+   await expect(landing).toBeVisible()
   }
   await mkdir('.local',{recursive:true})
   await page.screenshot({path:`.local/${game}-${viewport.width}.png`,fullPage:true})

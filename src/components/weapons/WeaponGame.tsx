@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import { advanceWeapon, coutelasAim, createWeaponRun, recordWeaponInput, STEP, type Input, type WeaponGame as Game, type WeaponRun } from '~/game/weapons/engine'
 import { gameLabel, gameScore } from '~/game/weapons/catalog'
 import { queueScore } from '~/game/sandale/pending-scores'
 import { api } from '~/utils/api'
 import ScoloSprite from '../sandale/ScoloSprite'
-import { CoutelasControls, CoutelasField } from './CoutelasField'
+import { CoutelasField, CoutelasInstructions, CoutelasPower } from './CoutelasField'
 import styles from './Weapons.module.css'
 
 const clone = (run: WeaponRun) => ({ ...run, targets: run.targets.map(t => ({ ...t })), shots: run.shots.map(t => ({ ...t })), marks: [...run.marks] })
@@ -31,6 +31,9 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
     window.addEventListener('blur', pause); document.addEventListener('visibilitychange', hide)
     return () => { window.removeEventListener('blur', pause); document.removeEventListener('visibilitychange', hide) }
   }, [pause])
+  useLayoutEffect(() => {
+    if (mode === 'playing') arena.current?.focus({ preventScroll: true })
+  }, [mode])
   useEffect(() => {
     if (mode !== 'playing') return
     let previous = performance.now(), accumulated = 0, request = 0
@@ -54,7 +57,7 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
       const session = await begin({ game })
       if (!mounted.current) return
       token.current = session.token; actions.current = []; run.current = createWeaponRun(game, session.seed)
-      paint(); setMode('playing'); arena.current?.focus()
+      paint(); setMode('playing')
     } catch (cause) { if (mounted.current) { setError(cause instanceof Error ? cause.message : 'Réessaie dans un instant.'); setMode('ready') } }
   }
   function moveDigrain(event: PointerEvent<SVGSVGElement>) {
@@ -64,9 +67,9 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
   }
   function resume() {
     setMode('playing')
-    arena.current?.focus()
   }
   const aim = game === 'coutelas' ? coutelasAim(frame) : null
+  const tutorial = game === 'coutelas' && (mode === 'ready' || mode === 'preparing')
   const label = game === 'digrain' ? 'Invasion au Digrain' : 'Le coutelas'
   const score = gameScore(game, { elapsedMs: frame.tick, crushed: frame.hits, points: frame.score })
   return <section className={aim ? `${styles.game} ${styles.coutelasGame}` : styles.game} aria-labelledby={title}
@@ -77,9 +80,9 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
       }
     }}>
     <header><div><h3 id={title}>{label}</h3><p>{game === 'digrain' ? 'Vise. Pulvérise. Relâche pour recharger.' : 'Fais atterrir le coutelas sur le scolo.'}</p></div><button type="button" onClick={onClose} aria-label="Fermer le mini-jeu">×</button></header>
-    <div className={styles.hud}><strong data-testid={aim ? 'coutelas-score' : undefined}>{score}</strong><span>{game === 'digrain' ? `${frame.lives} vies · vague ${frame.wave}` : `${frame.attempts} lancer${frame.attempts > 1 ? 's' : ''}`}</span><button type="button" onClick={mode === 'paused' ? resume : pause} disabled={mode !== 'playing' && mode !== 'paused'}>{mode === 'paused' ? 'Reprendre' : 'Pause'}</button></div>
-    <div className={styles.arena}>
-      <svg ref={arena} viewBox="0 0 320 400" tabIndex={0} role="group" aria-label={`Terrain pour ${gameLabel(game)}`} aria-describedby={instructions}
+    {!tutorial && <div className={styles.hud}><strong data-testid={aim ? 'coutelas-score' : undefined}>{score}</strong><span>{game === 'digrain' ? `${frame.lives} vies · vague ${frame.wave}` : `${frame.attempts} lancer${frame.attempts > 1 ? 's' : ''}`}</span><button type="button" onClick={mode === 'paused' ? resume : pause} disabled={mode !== 'playing' && mode !== 'paused'}>{mode === 'paused' ? 'Reprendre' : 'Pause'}</button></div>}
+    <div className={tutorial ? `${styles.arena} ${styles.tutorialArena}` : styles.arena}>
+      <svg ref={arena} viewBox="0 0 320 400" tabIndex={tutorial ? -1 : 0} role={aim ? 'button' : 'group'} aria-hidden={tutorial || undefined} aria-keyshortcuts={aim ? 'Space Enter' : undefined} aria-label={`Terrain pour ${gameLabel(game)}`} aria-describedby={instructions}
         data-testid={`${game}-board`} data-mode={mode} data-phase={aim?.phase} data-angle={aim?.angle} data-power={aim?.power}
         onKeyDown={event => {
           if (mode !== 'playing') return
@@ -95,6 +98,10 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
           if (event.key === 'ArrowRight') input({ x: Math.min(302, run.current.x + 12) })
           if (event.key === ' ' && !event.repeat) input({ fire: true })
         }} onKeyUp={event => { if (event.key === ' ' && game === 'digrain' && mode === 'playing') input({ fire: false }) }}
+        onClick={event => {
+          // Assistive technologies can activate the board without a pointer event.
+          if (aim && mode === 'playing' && event.detail === 0) input({ tap: true })
+        }}
         onPointerDown={event => {
           if (mode !== 'playing' || !event.isPrimary || event.button !== 0) return
           event.preventDefault(); event.currentTarget.focus()
@@ -114,9 +121,11 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
           <image href="/digrain.png" x={frame.x - 16} y="352" width="32" height="46" />
         </>}
       </svg>
-      {mode !== 'playing' && <div className={styles.curtain}>
-        <h4>{mode === 'over' ? 'Fin de partie' : mode === 'paused' ? 'Pause' : aim ? 'Deux appuis pour lancer' : label}</h4>
-        <p>{mode === 'over' ? score : game === 'digrain' ? 'Maintiens pour tirer, glisse pour viser. Si la bombe se vide, relâche.' : 'Un appui bloque l’angle. Le suivant lance le coutelas là où se trouve le viseur. Trois essais par cible.'}</p>
+      {mode !== 'playing' && <div className={tutorial ? styles.tutorial : styles.curtain}>
+        <h4>{mode === 'over' ? 'Fin de partie' : mode === 'paused' ? 'Pause' : tutorial ? 'Deux clics pour lancer' : label}</h4>
+        {tutorial && <><CoutelasInstructions /><p className={styles.guideNote}>Viseur et pointillés pour les deux premiers lancers.</p></>}
+        {mode === 'over' && <p>{score}</p>}
+        {game === 'digrain' && mode !== 'over' && <p>Maintiens pour tirer, glisse pour viser. Si la bombe se vide, relâche.</p>}
         {error && <p role="alert">{error}</p>}
         <button ref={launch} type="button" disabled={mode === 'preparing'} onClick={mode === 'paused' ? resume : () => void start()}>{mode === 'preparing' ? 'Préparation…' : mode === 'paused' ? 'Reprendre' : mode === 'over' ? 'Rejouer' : 'Commencer'}</button>
         {mode === 'over' && <button type="button" onClick={onLeaderboard}>Classement</button>}
@@ -126,8 +135,8 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
       <label>Pression : {Math.round(frame.pressure)} %<meter value={frame.pressure} min="0" max="100" /></label>
       <label>Position<input type="range" min="18" max="302" value={frame.x} disabled={mode !== 'playing'} onChange={event => input({ x: Number(event.target.value) })} /></label>
       <button type="button" disabled={mode !== 'playing'} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); input({ fire: true }) }} onPointerUp={() => input({ fire: false })} onPointerCancel={() => input({ fire: false })} onKeyDown={event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); input({ fire: true }) } }} onKeyUp={event => { if ([' ', 'Enter'].includes(event.key)) input({ fire: false }) }}>Pulvériser</button>
-    </div> : aim && mode === 'playing' && <CoutelasControls aim={aim} onTap={() => input({ tap: true })} />}
-    <p id={instructions} className={styles.instructions}>{game === 'digrain' ? 'Clavier : flèches pour viser, espace pour tirer. Trois minutes maximum.' : 'Touche le terrain ou appuie sur Espace. La visée accélère à chaque scolo touché.'}</p>
+    </div> : aim && mode === 'playing' && <CoutelasPower aim={aim} />}
+    <p id={instructions} className={aim ? styles.srOnly : styles.instructions}>{aim ? 'Espace ou Entrée pour bloquer l’angle, puis une deuxième fois pour lancer.' : 'Clavier : flèches pour viser, espace pour tirer. Trois minutes maximum.'}</p>
     <span role="status" className={styles.srOnly}>{mode === 'over' ? 'Partie terminée.' : mode === 'paused' ? 'Partie en pause.' : mode === 'playing' && aim ? (
       aim.phase === 'power' ? 'Angle bloqué. Choisis ta puissance.' : aim.phase === 'flight' ? 'En vol.' : aim.phase === 'waiting' ? 'Touché !' : frame.marks.length ? `Raté. ${frame.attempts > 1 ? 'Deux essais' : 'Un essai'}. Choisis ton angle.` : 'Choisis ton angle.'
     ) : ''}</span>

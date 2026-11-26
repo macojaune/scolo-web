@@ -21,6 +21,7 @@ function missAll(seed: number) {
 test('coutelas replays timed taps and rejects preset angles, powers and premature confirmations', () => {
   const { run, actions } = missAll(42)
   assert.equal(run.attempts, 0)
+  assert.equal(run.landedThrows, 3)
   assert.equal(run.marks.length, 3)
   assert.equal(actions.length, 6)
   assert.deepEqual(replayWeapon('coutelas', 42, actions, run.tick), run)
@@ -109,11 +110,15 @@ test('every generated target is reachable by the two timers at opening and maxim
       const impactTick = run.tick + run.shots[0]!.flight!.duration
       advanceWeapon(run, impactTick - STEP)
       assert.equal(run.score, 0)
+      assert.equal(run.landedThrows, 0)
       advanceWeapon(run, impactTick)
       assert.equal(run.score, 300)
       assert.equal(run.hits, previousHits + 1)
       assert.equal(coutelasAim(run).phase, 'waiting')
       assert.deepEqual(coutelasAim(run).landing, expectedLanding)
+      advanceWeapon(run, run.nextTarget)
+      assert.equal(run.throws, 0)
+      assert.equal(run.landedThrows, 1)
     }
   }
 })

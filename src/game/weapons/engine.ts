@@ -9,7 +9,7 @@ export type WeaponRun = {
   game: WeaponGame; tick: number; random: number; status: 'running' | 'lost'; score: number;
   hits: number; lives: number; wave: number; targets: Target[]; shots: Shot[];
   marks: Target[]; x: number; fire: boolean; pressure: number; exhausted: boolean;
-  nextShot: number; nextWave: number; attempts: number; throws: number; nextTarget: number;
+  nextShot: number; nextWave: number; attempts: number; throws: number; landedThrows: number; nextTarget: number;
   aimSince: number; lockedAngle: number | null; lastLanding: Point | null;
 }
 export const STEP = 20
@@ -80,7 +80,7 @@ function wave(run: WeaponRun) {
 export function createWeaponRun(game: WeaponGame, seed: number): WeaponRun {
   const run: WeaponRun = { game, tick: 0, random: seed || 1, status: 'running', score: 0, hits: 0,
     lives: 3, wave: 0, targets: [], shots: [], marks: [], x: 160, fire: false, pressure: 100,
-    exhausted: false, nextShot: 0, nextWave: 0, attempts: 3, throws: 0, nextTarget: 0, aimSince: 0, lockedAngle: null, lastLanding: null }
+    exhausted: false, nextShot: 0, nextWave: 0, attempts: 3, throws: 0, landedThrows: 0, nextTarget: 0, aimSince: 0, lockedAngle: null, lastLanding: null }
   if (game === 'coutelas') target(run); else wave(run)
   return run
 }
@@ -128,6 +128,7 @@ function stepCoutelas(run: WeaponRun) {
   if (t < 1) return
 
   run.shots = []
+  run.landedThrows++
   run.lockedAngle = null
   run.aimSince = run.tick
   run.lastLanding = landing
