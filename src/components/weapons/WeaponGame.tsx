@@ -3,18 +3,20 @@ import type { PointerEvent } from 'react'
 import { advanceWeapon, coutelasAim, createWeaponRun, recordWeaponInput, STEP, type Input, type WeaponGame as Game, type WeaponRun } from '~/game/weapons/engine'
 import { gameLabel, gameScore } from '~/game/weapons/catalog'
 import { queueScore } from '~/game/sandale/pending-scores'
+import type { CompletedWeaponScore } from '~/game/sandale/protocol'
 import { api } from '~/utils/api'
 import ScoloSprite from '../sandale/ScoloSprite'
 import { CoutelasField, CoutelasInstructions, CoutelasPower } from './CoutelasField'
 import styles from './Weapons.module.css'
 
 const clone = (run: WeaponRun) => ({ ...run, targets: run.targets.map(t => ({ ...t })), shots: run.shots.map(t => ({ ...t })), marks: [...run.marks] })
-export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Game; onClose: () => void; onLeaderboard: () => void }) {
+export default function WeaponGame({ game, autoStart, onClose, onLeaderboard }: { game: Game; autoStart: boolean; onClose: () => void; onLeaderboard: (result?: CompletedWeaponScore) => void }) {
   const [frame, setFrame] = useState(() => createWeaponRun(game, 1))
-  const [mode, setMode] = useState<'ready' | 'preparing' | 'playing' | 'paused' | 'over'>('ready')
+  const [mode, setMode] = useState<'ready' | 'preparing' | 'playing' | 'paused' | 'over'>(autoStart ? 'preparing' : 'ready')
   const [error, setError] = useState<string | null>(null)
-  const run = useRef(createWeaponRun(game, 1)), token = useRef(''), actions = useRef<Input[]>([])
+  const run = useRef(createWeaponRun(game, 1)), session = useRef({ token: '', id: '' }), actions = useRef<Input[]>([])
   const mounted = useRef(true), arena = useRef<SVGSVGElement>(null), launch = useRef<HTMLButtonElement>(null)
+  const replayStarted = useRef(false)
   const { mutateAsync: begin } = api.arcade.start.useMutation()
   const title = useId(), instructions = useId()
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
@@ -43,23 +45,32 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
       advanceWeapon(run.current, run.current.tick + steps * STEP)
       paint()
       if (run.current.status === 'lost') {
-        queueScore({ token: token.current, elapsedMs: run.current.tick, actions: [...actions.current] }, game)
-        setMode('over'); return
+        const elapsedMs = run.current.tick
+        queueScore({ token: session.current.token, elapsedMs, actions: [...actions.current] }, game)
+        if (game === 'coutelas') onLeaderboard({ id: session.current.id, token: session.current.token, elapsedMs, points: run.current.score })
+        else setMode('over')
+        return
       }
       request = requestAnimationFrame(tick)
     }
     request = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(request)
-  }, [mode, game, paint])
-  async function start() {
+  }, [mode, game, paint, onLeaderboard])
+  const start = useCallback(async () => {
     setMode('preparing'); setError(null)
     try {
-      const session = await begin({ game })
+      const started = await begin({ game })
       if (!mounted.current) return
-      token.current = session.token; actions.current = []; run.current = createWeaponRun(game, session.seed)
+      session.current = started; actions.current = []; run.current = createWeaponRun(game, started.seed)
       paint(); setMode('playing')
     } catch (cause) { if (mounted.current) { setError(cause instanceof Error ? cause.message : 'Réessaie dans un instant.'); setMode('ready') } }
-  }
+  }, [begin, game, paint])
+  useEffect(() => {
+    if (autoStart && !replayStarted.current) {
+      replayStarted.current = true
+      void start()
+    }
+  }, [autoStart, start])
   function moveDigrain(event: PointerEvent<SVGSVGElement>) {
     const bounds = event.currentTarget.getBoundingClientRect()
     const x = (event.clientX - bounds.left) * 320 / bounds.width
@@ -69,7 +80,7 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
     setMode('playing')
   }
   const aim = game === 'coutelas' ? coutelasAim(frame) : null
-  const tutorial = game === 'coutelas' && (mode === 'ready' || mode === 'preparing')
+  const tutorial = game === 'coutelas' && (mode === 'ready' || (mode === 'preparing' && !autoStart))
   const label = game === 'digrain' ? 'Invasion au Digrain' : 'Le coutelas'
   const score = gameScore(game, { elapsedMs: frame.tick, crushed: frame.hits, points: frame.score })
   return <section className={aim ? `${styles.game} ${styles.coutelasGame}` : styles.game} aria-labelledby={title}
@@ -128,7 +139,7 @@ export default function WeaponGame({ game, onClose, onLeaderboard }: { game: Gam
         {game === 'digrain' && mode !== 'over' && <p>Maintiens pour tirer, glisse pour viser. Si la bombe se vide, relâche.</p>}
         {error && <p role="alert">{error}</p>}
         <button ref={launch} type="button" disabled={mode === 'preparing'} onClick={mode === 'paused' ? resume : () => void start()}>{mode === 'preparing' ? 'Préparation…' : mode === 'paused' ? 'Reprendre' : mode === 'over' ? 'Rejouer' : 'Commencer'}</button>
-        {mode === 'over' && <button type="button" onClick={onLeaderboard}>Classement</button>}
+        {mode === 'over' && <button type="button" onClick={() => onLeaderboard()}>Classement</button>}
       </div>}
     </div>
     {game === 'digrain' ? <div className={styles.controls}>

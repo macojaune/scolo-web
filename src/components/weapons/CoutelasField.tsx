@@ -86,12 +86,16 @@ export function CoutelasField({ frame, aim }: { frame: WeaponRun; aim: Aim }) {
 
 export function CoutelasPower({ aim }: { aim: Aim }) {
   const showPower = aim.phase === 'power' || aim.phase === 'flight'
+  const secondsLeft = aim.powerTimeLeftMs === undefined ? null : Math.ceil(aim.powerTimeLeftMs / 1000)
   return <div className={styles.powerReadout}>
     <span>Puissance</span>
     <div className={styles.powerTrack} aria-hidden="true">
       <span style={{ transform: `scaleX(${showPower ? aim.power / 100 : 0})` }} />
     </div>
-    <span>{showPower ? `${Math.round(aim.power)} %` : '—'}</span>
+    <span className={styles.powerValue}>{showPower ? `${Math.round(aim.power)} %` : '—'}</span>
+    {secondsLeft !== null && <span role="timer" className={styles.powerTimer} data-urgent={secondsLeft <= 2}>
+      Lancer dans {secondsLeft} s
+    </span>}
   </div>
 }
 
@@ -136,7 +140,7 @@ export function CoutelasInstructions() {
     </li>
     <li>
       <ThrowDiagram phase="power" />
-      <div><span>2e clic</span><strong>La puissance</strong><p>Plus la jauge monte, plus le coutelas va loin.</p></div>
+      <div><span>2e clic</span><strong>La puissance</strong><p>Choisis la distance. À la fin du décompte, le coutelas part tout seul.</p></div>
     </li>
   </ol>
 }

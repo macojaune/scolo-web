@@ -14,17 +14,18 @@ try {
   const page = await browser.newPage({ viewport, hasTouch: touch })
   const errors: string[] = []; page.on('pageerror',error=>errors.push(error.message))
   await page.addInitScript(() => localStorage.setItem('umami.disabled','1'))
-  await page.route('**/api/trpc/**', async route => {
-    try {
-    const path = new URL(route.request().url()).pathname
-    const response = await route.fetch()
-    if (path.endsWith('/arcade.start') && response.ok()) {
+  page.on('response', async response => {
+    if (new URL(response.url()).pathname.endsWith('/arcade.start') && response.ok()) {
       const body = await response.json()
       const token = (Array.isArray(body) ? body[0] : body)?.result?.data?.json?.token
       if (typeof token === 'string') tokens.push({game,token})
     }
+  })
+  await page.route('**/api/trpc/*app.game*', async route => {
     // An explicitly simulated appearance, in browser memory only. No appearance is written.
-    if (route.request().method() === 'GET' && path.includes('app.game')) {
+    if (route.request().method() !== 'GET') return route.continue()
+    try {
+      const response = await route.fetch()
       const body = await response.json()
       for(const item of Array.isArray(body) ? body : [body]) {
         const state = item?.result?.data?.json
@@ -33,9 +34,7 @@ try {
           state.history = [state.lastAppearance]
         }
       }
-      return route.fulfill({response,json:body})
-    }
-    await route.fulfill({response})
+      await route.fulfill({response,json:body})
     } catch { if (!page.isClosed()) await route.abort().catch(() => undefined) }
   })
   await page.goto(target.href, { waitUntil:'networkidle' })
@@ -76,30 +75,50 @@ try {
      await expect(board).toHaveAttribute('data-phase', 'angle')
      await expect(shotButton).toHaveCount(0)
      await expect(guide).toBeVisible({ visible: guided })
+     if (shot === 1) {
+       // Aim at the left edge so the automatic shot misses at any power.
+       await page.waitForFunction(() =>
+         Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-angle')) >= 157)
+     }
      await tapBoard()
      await expect(board).toHaveAttribute('data-phase', 'power')
      await expect(shotButton).toHaveCount(0)
      await expect(guide).toBeVisible({ visible: guided })
      await expect(landing).toBeVisible({ visible: guided })
-     // Throw at low power, well short of any target.
-     await page.waitForFunction(() => {
-       const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
-       return power >= 3 && power <= 10
-     })
-     await tapBoard()
-     await expect(board).toHaveAttribute('data-phase', 'flight')
-     await expect(landing).toBeVisible({ visible: guided })
-     await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(shot)
      if (shot === 1) {
-       await expect(dialog.getByText('2 lancers',{exact:true})).toBeVisible()
        await board.press('Escape')
        await expect(board).toHaveAttribute('data-mode', 'paused')
+       const frozenPower = await board.getAttribute('data-power')
+       await page.waitForTimeout(250)
+       assert.equal(await board.getAttribute('data-power'), frozenPower)
        await dialog.getByRole('button',{name:'Reprendre',exact:true}).first().click()
        await expect(board).toHaveAttribute('data-mode', 'playing')
+       await expect(board).toHaveAttribute('data-phase', 'power')
+       // No second tap. Observe the short flight on the next animation frame.
+       await page.waitForFunction(() =>
+         document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-phase') === 'flight',
+       undefined, { timeout: 12000 })
+     } else {
+       // Throw manually at low power, well short of any target.
+       await page.waitForFunction(() => {
+         const power = Number(document.querySelector('[data-testid="coutelas-board"]')?.getAttribute('data-power'))
+         return power >= 3 && power <= 10
+       })
+       await tapBoard()
+       await expect(board).toHaveAttribute('data-phase', 'flight')
      }
+     await expect(landing).toBeVisible({ visible: guided })
+     if (shot < 3) await expect(dialog.getByTestId('coutelas-miss')).toHaveCount(shot)
    }
-   await expect(board).toHaveAttribute('data-mode', 'over')
-   await dialog.getByRole('button', {name:'Rejouer', exact:true}).click()
+   const ranking = page.getByRole('dialog', { name: 'Classement : le coutelas', exact: true })
+   await expect(ranking).toBeVisible()
+   await expect(dialog).not.toBeVisible()
+   const result = ranking.getByRole('region', { name: 'Résultat de cette partie' })
+   await expect(result.getByText('Ton score', { exact: true })).toBeVisible()
+   await expect(result.getByText('0 pts', { exact: true })).toBeVisible()
+   await expect(result.getByText(/^#\d+$/)).toBeVisible({ timeout: 15000 })
+   await ranking.getByRole('button', {name:'Rejouer', exact:true}).click()
+   await expect(ranking).not.toBeVisible()
    await expect(board).toHaveAttribute('data-mode', 'playing')
    await expect(board).toHaveAttribute('data-phase', 'angle')
    await expect(guide).toBeVisible()

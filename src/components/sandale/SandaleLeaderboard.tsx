@@ -1,6 +1,8 @@
 import { gameLabel, gameScore, type ArcadeGame } from '~/game/weapons/catalog'
 import { useAuth, useClerk } from '@clerk/nextjs'
+import { skipToken, useQuery } from '@tanstack/react-query'
 import { useEffect, useId, useRef, useState } from 'react'
+import type { CompletedWeaponScore } from '~/game/sandale/protocol'
 import { AUTH_RETURN_KEY } from '~/game/sandale/pending-scores'
 import { api } from '~/utils/api'
 import type { useScoreRecovery } from './useScoreRecovery'
@@ -9,10 +11,10 @@ import styles from './SandaleLeaderboard.module.css'
 
 type Bonus = { key: string; amount: number; total: number; viewerId: string }
 type Props = { game?: ArcadeGame; open: boolean; onClose: () => void } & (
-  | { view: 'records'; scores?: never; onReplay?: never }
-  | { view?: 'session'; scores: ReturnType<typeof useScoreRecovery>; onReplay: () => void }
+  | { view: 'records'; scores?: never; onReplay?: never; finished?: never }
+  | { view?: 'session'; scores: ReturnType<typeof useScoreRecovery>; onReplay: () => void; finished?: CompletedWeaponScore }
 )
-export default function SandaleLeaderboard({ open, onClose, onReplay, scores, view = 'session', game = 'sandale' }: Props) {
+export default function SandaleLeaderboard({ open, onClose, onReplay, scores, finished, view = 'session', game = 'sandale' }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const ownRow = useRef<HTMLTableRowElement>(null)
@@ -23,7 +25,14 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
   const viewerId = scores?.viewerId ?? auth.userId ?? null
   const utils = api.useUtils()
   const [offset, setOffset] = useState<number | undefined>()
-  const ranking = api.arcade.standings.useQuery({ viewerId, game, offset: records ? offset ?? 0 : offset, view }, { enabled: open && auth.isLoaded })
+  const standings = api.arcade.standings.useQuery({ viewerId, game, offset: records ? offset ?? 0 : offset, view }, { enabled: open && auth.isLoaded && !finished })
+  const resultStandings = useQuery({
+    queryKey: ['arcade-run-standings', game, viewerId, finished?.id, offset],
+    queryFn: finished ? () => utils.client.arcade.runStandings.mutate({ viewerId, game, token: finished.token, offset }) : skipToken,
+    enabled: Boolean(finished && open && auth.isLoaded && !scores?.busy && !scores?.claiming && !scores?.error),
+  })
+  const ranking = finished ? resultStandings : standings
+  const board = ranking.data
   const rewards = api.arcade.leaderboard.useQuery({ viewerId, game }, { enabled: open && auth.isLoaded && !records })
   const attemptedRewards = useRef(new Set<string>())
   const seenBonuses = useRef(new Set<string>())
@@ -67,8 +76,8 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
     const container = list.current
     const row = ownRow.current
     container.scrollTop = !records && offset === undefined && row ? container.scrollTop + row.getBoundingClientRect().top - container.getBoundingClientRect().top - (container.clientHeight - row.clientHeight) / 2 : 0
-  }, [open, records, offset, ranking.data])
-  const current = ranking.data?.me ?? (records ? null : scores?.pending.data ?? scores?.saved)
+  }, [open, records, offset, board])
+  const current = board?.me ?? finished ?? (records ? null : scores?.pending.data ?? scores?.saved)
   const visibleBonus = !records && toast?.viewerId === viewerId ? toast : null
 
   function signIn() {
@@ -92,7 +101,7 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
       </button>
     </header>
     {current && <section className={styles.result} aria-label={records ? 'Ton record' : 'Résultat de cette partie'}>
-      <div className={styles.position}><span>{records ? 'Ton record' : ranking.data?.sessionId ? 'Cette partie' : 'Ta place'}</span><div className={styles.placeValue}><strong>{ranking.data?.me ? `#${ranking.data.me.rank}` : '…'}</strong>
+      <div className={styles.position}><span>{records ? 'Ton record' : finished || board?.sessionId ? 'Cette partie' : 'Ta place'}</span><div className={styles.placeValue}><strong>{board?.me ? `#${board.me.rank}` : '…'}</strong>
         {visibleBonus && <span key={visibleBonus.key} className={styles.bonus} role="status">+{visibleBonus.amount} Zikak</span>}
       </div></div>
       <div className={styles.time}><span>{game === 'sandale' ? 'Ton temps' : 'Ton score'}</span><strong>{gameScore(game, current)}</strong></div>
@@ -101,27 +110,27 @@ export default function SandaleLeaderboard({ open, onClose, onReplay, scores, vi
       {scores.busy && <p role="status">Sauvegarde…</p>}
       {scores.claiming && <p role="status">Enregistrement…</p>}
       {scores.pending.data?.otherAccount && <p role="alert">Cette partie appartient à un autre compte. Elle reste conservée pour ce compte.</p>}
-      {!scores.isSignedIn && scores.pending.data && !scores.pending.data.otherAccount && <button className={styles.secondary} type="button" disabled={scores.busy} onClick={signIn}>Se connecter pour enregistrer</button>}
+      {!scores.isSignedIn && (!finished || board) && scores.pending.data && !scores.pending.data.otherAccount && <button className={styles.secondary} type="button" disabled={scores.busy} onClick={signIn}>Se connecter pour enregistrer</button>}
       {scores.error && <div role="alert"><p>{scores.error}</p><button className={styles.inline} type="button" onClick={() => void scores.retry()}>Réessayer la sauvegarde</button></div>}
       {scores.pending.error && <p role="alert">La récupération ne répond pas. <button className={styles.inline} type="button" onClick={() => void scores.pending.refetch()}>Réessayer</button></p>}
       {collecting && <p role="status">Crédit en cours…</p>}
       {rewardError && <p role="alert">Le bonus reste disponible. <button className={styles.inline} type="button" onClick={() => scores.viewerId && collectReward({ viewerId: scores.viewerId, game })}>Réessayer</button></p>}
     </section>}
-    {ranking.isPending && <p role="status" className={styles.empty}>Chargement du classement…</p>}
+    {ranking.isPending && !scores?.error && <p role="status" className={styles.empty}>Chargement du classement…</p>}
     {ranking.error && <div className={styles.empty} role="alert">Le classement est indisponible. <button className={styles.inline} type="button" onClick={() => void ranking.refetch()}>Réessayer</button></div>}
-    {ranking.data && (ranking.data.entries.length ? <>
+    {board && (board.entries.length ? <>
       <div ref={list} className={styles.scrollArea} role="region" aria-label="Joueurs du classement" tabIndex={0}>
-        {ranking.data.previousOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(ranking.data!.previousOffset!)}>Voir les places précédentes</button>}
+        {board.previousOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(board.previousOffset ?? undefined)}>Voir les places précédentes</button>}
         <table className={styles.table}>
-          <caption className={styles.srOnly}>Classement, {ranking.data.total} résultats</caption>
+          <caption className={styles.srOnly}>Classement, {board.total} résultats</caption>
           <thead><tr><th scope="col">Place</th><th scope="col">Joueur</th><th scope="col">{game === 'sandale' ? 'Temps' : 'Score'}</th></tr></thead>
-          <tbody>{ranking.data.entries.map(entry => <tr key={entry.rank} ref={(entry.isCurrentRun || (!ranking.data.sessionId && entry.isMe)) ? ownRow : undefined} className={entry.isMe ? styles.me : undefined} aria-current={(entry.isCurrentRun || (!ranking.data.sessionId && entry.isMe)) ? 'true' : undefined}>
+          <tbody>{board.entries.map(entry => <tr key={entry.rank} ref={(entry.isCurrentRun || (!board.sessionId && entry.isMe)) ? ownRow : undefined} className={entry.isMe ? styles.me : undefined} aria-current={(entry.isCurrentRun || (!board.sessionId && entry.isMe)) ? 'true' : undefined}>
             <td>{entry.rank}</td><th scope="row"><span>{entry.name}</span>{entry.isMe && <small className={styles.you}>{entry.isCurrentRun ? 'cette partie' : 'ton record'}</small>}</th><td>{gameScore(game, entry)}</td>
           </tr>)}</tbody>
         </table>
-        {ranking.data.nextOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(ranking.data!.nextOffset!)}>Voir les places suivantes</button>}
+        {board.nextOffset !== null && <button type="button" className={styles.more} onClick={() => setOffset(board.nextOffset ?? undefined)}>Voir les places suivantes</button>}
       </div>
     </> : <p className={styles.empty}>La première place t’attend.</p>)}
-    <div className={records ? styles.recordsActions : styles.actions}>{onReplay && <button type="button" className={styles.secondary} onClick={onReplay}>Rejouer</button>}<LeaderboardShare game={game} board={ranking.data} records={records} /></div>
+    <div className={records ? styles.recordsActions : styles.actions}>{onReplay && <button type="button" className={styles.secondary} onClick={onReplay}>Rejouer</button>}{(!finished || board) && <LeaderboardShare game={game} board={board} records={records} />}</div>
   </dialog>
 }

@@ -61,7 +61,9 @@
   font-size:12px;
   font-variant-numeric:tabular-nums;
 }
-.powerReadout > span:last-child { min-width:4ch; text-align:right; }
+.powerValue { min-width:4ch; text-align:right; }
+.powerTimer { padding-left:8px; border-left:1px solid #49443a; white-space:nowrap; }
+.powerTimer[data-urgent="true"] { color:var(--yellow); }
 .powerTrack { flex:1; overflow:hidden; height:4px; border-radius:2px; background:#49443a; }
 .powerTrack span { display:block; height:100%; background:var(--yellow); transform-origin:left; }
 .tutorialArena { display:grid; }

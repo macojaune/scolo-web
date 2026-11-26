@@ -44,7 +44,7 @@ export async function createArcadeService(client: Client, now = () => Date.now()
         const seed = randomInt(1, 2147483647)
         const id = randomUUID()
         await tx.execute({ sql: 'INSERT INTO scolo_arcade_runs (id, token_hash, rules, seed, started_at, rate_key, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [id, hash(token), rules, seed, now(), rateKey, userId] })
-        return { token, seed, rules }
+        return { id, token, seed, rules }
       })
     },
     async finish(input: FinishedRun, userId: string | null) {

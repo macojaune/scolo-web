@@ -37,14 +37,17 @@ export function useScoreRecovery(game: ArcadeGame = 'sandale') {
       // New completed games can join while a previous receipt is being written.
       for (;;) {
         const item = pendingScores(game).find(score => !attempted.has(score.token))
-        if (!item) break
+        if (!item) {
+          await Promise.all([utils.arcade.pending.invalidate(), utils.arcade.standings.invalidate()])
+          if (pendingScores(game).some(score => score.submission && !attempted.has(score.token))) continue
+          break
+        }
         attempted.add(item.token)
         const result = item.submission ? await finish({ ...item.submission, game }) : await restore({ token: item.token, game })
         if (result?.claimed && viewerId) { acknowledgeScore(result.id, game); setSaved({ ...result, viewerId }) }
         else if (result) markScoreDurable(item.token, result.id, game)
         else if (item.id) acknowledgeScore(item.id, game)
       }
-      await Promise.all([utils.arcade.pending.invalidate(), utils.arcade.standings.invalidate()])
     } catch (cause) { setError(recoveryError(cause)) }
     finally { draining.current = false; setBusy(false) }
   }, [finish, restore, utils, viewerId, game])
@@ -84,5 +87,5 @@ export function useScoreRecovery(game: ArcadeGame = 'sandale') {
 
   return { isLoaded, isSignedIn, viewerId, busy, claiming, pending, error,
     saved: saved?.viewerId === userId ? saved : null, bonus: bonus?.viewerId === userId ? bonus : null,
-    retry: () => pending.data && userId ? claimScore() : drain() }
+    retry: () => pending.data && userId && !pendingScores(game).some(score => score.submission) ? claimScore() : drain() }
 }

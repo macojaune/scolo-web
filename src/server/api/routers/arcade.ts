@@ -75,6 +75,13 @@ export const arcadeRouter = createTRPCRouter({
     viewer(ctx.userId, input.viewerId)
     return (await service(input.game)).standings(ctx.userId, input.view === 'records' ? undefined : ctx.req.cookies?.[cookieName(input.game, true)] ?? cookie(ctx.req, input.game), input.offset ?? (input.view === 'records' ? 0 : undefined))
   })),
+  // POST carries the private receipt in the request body, including when another tab finishes a game.
+  runStandings: arcadePublic.input(viewerInput.extend({ token: finishInput.shape.token, offset: z.number().int().min(0).max(10000000).optional() })).mutation(({ ctx, input }) => handle(async () => {
+    viewer(ctx.userId, input.viewerId)
+    const board = await (await service(input.game)).standings(ctx.userId, input.token, input.offset)
+    if (!board.sessionId) throw new ArcadeError('NOT_FOUND', 'Le résultat de cette partie est indisponible.')
+    return board
+  })),
   claim: arcadeProtected.input(z.object({ viewerId: z.string().min(1), game: gameInput.default('sandale') })).mutation(({ ctx, input }) => handle(async () => {
     viewer(ctx.userId, input.viewerId)
     const token = cookie(ctx.req, input.game)

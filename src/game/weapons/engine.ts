@@ -26,6 +26,12 @@ type Aim = {
   angle: number
   power: number
   landing: Point
+  powerTimeLeftMs?: number
+}
+
+function powerTimeLeftMs(run: WeaponRun) {
+  const timeLimit = Math.max(3000, 6000 - run.score)
+  return Math.max(0, timeLimit - (run.tick - run.aimSince))
 }
 
 function oscillation(elapsedMs: number, halfPeriodMs: number) {
@@ -55,9 +61,9 @@ export function coutelasAim(run: WeaponRun): Aim {
     return { phase: 'waiting', angle, power: 0, landing: run.lastLanding ?? COUTELAS_ORIGIN }
   }
   if (flight) return { phase: 'flight', angle, power: flight.power, landing: flight.landing }
-  const phase = run.lockedAngle === null ? 'angle' : 'power'
-  const power = phase === 'angle' ? 100 : 100 * oscillation(elapsed, chargeTime)
-  return { phase, angle, power, landing: landingPoint(angle, power) }
+  if (run.lockedAngle === null) return { phase: 'angle', angle, power: 100, landing: landingPoint(angle, 100) }
+  const power = 100 * oscillation(elapsed, chargeTime)
+  return { phase: 'power', angle, power, landing: landingPoint(angle, power), powerTimeLeftMs: powerTimeLeftMs(run) }
 }
 
 export function random(run: WeaponRun) {
@@ -100,14 +106,17 @@ export function weaponInput(run: WeaponRun, input: Input): boolean {
     return true
   }
   if (aim.phase !== 'power' || run.tick === run.aimSince) return false
+  launchCoutelas(run, aim)
+  return true
+}
 
+function launchCoutelas(run: WeaponRun, aim: Aim) {
   const { x, y } = COUTELAS_ORIGIN
   const dx = aim.landing.x - x, dy = aim.landing.y - y
   const duration = Math.round((480 + Math.hypot(dx, dy)) / STEP) * STEP
   run.shots.push({ x, y, vx: dx * 1000 / duration, vy: dy * 1000 / duration, age: 0, height: 0,
     flight: { duration, landing: aim.landing, power: aim.power } })
   run.throws++
-  return true
 }
 
 function stepCoutelas(run: WeaponRun) {
@@ -117,7 +126,10 @@ function stepCoutelas(run: WeaponRun) {
   }
   const shot = run.shots[0]
   const flight = shot?.flight
-  if (!shot || !flight) return
+  if (!shot || !flight) {
+    if (run.lockedAngle !== null && powerTimeLeftMs(run) === 0) launchCoutelas(run, coutelasAim(run))
+    return
+  }
 
   shot.age += STEP
   const t = Math.min(1, shot.age / flight.duration)

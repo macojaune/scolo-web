@@ -55,6 +55,54 @@ test('angle sweeps both ways, stays locked while power cycles, and sweeps faster
   assert.equal(coutelasAim(run).power, 0)
 })
 
+test('power expires at the current strength after a score-dependent delay measured from the angle tap', () => {
+  for (const [score, hits, delay] of [[0, 0, 6000], [1500, 5, 4500], [3000, 10, 3000], [9000, 30, 3000]] as const) {
+    const run = createWeaponRun('coutelas', 42)
+    run.score = score
+    run.hits = hits
+    advanceWeapon(run, 12000)
+    assert.equal(run.throws, 0)
+    assert.equal(coutelasAim(run).powerTimeLeftMs, undefined)
+    const actions: Input[] = []
+    assert.ok(recordWeaponInput(run, actions, { tap: true }))
+    assert.equal(coutelasAim(run).powerTimeLeftMs, delay)
+    const deadline = run.tick + delay
+    advanceWeapon(run, deadline - STEP)
+    assert.equal(coutelasAim(run).powerTimeLeftMs, STEP)
+    const expected = coutelasAim({ ...run, tick: deadline })
+    advanceWeapon(run, deadline)
+    const flight = coutelasAim(run)
+    assert.equal(flight.phase, 'flight')
+    assert.equal(flight.power, expected.power)
+    assert.deepEqual(flight.landing, expected.landing)
+    assert.equal(recordWeaponInput(run, actions, { tap: true }), false)
+    assert.equal(run.throws, 1)
+    assert.equal(actions.length, 1)
+  }
+})
+
+test('replay reproduces automatic launches with only the angle taps; a last-moment manual tap launches once', () => {
+  const run = createWeaponRun('coutelas', 42)
+  const actions: Input[] = []
+  while (run.status === 'running') {
+    if (coutelasAim(run).phase === 'angle') assert.ok(recordWeaponInput(run, actions, { tap: true }))
+    advanceWeapon(run, run.tick + STEP)
+  }
+  assert.equal(run.landedThrows, 3)
+  assert.equal(actions.length, 3)
+  assert.deepEqual(replayWeapon('coutelas', 42, actions, run.tick), run)
+
+  const manual = createWeaponRun('coutelas', 42)
+  assert.ok(weaponInput(manual, { at: 0, tap: true }))
+  advanceWeapon(manual, 6000 - STEP)
+  const chosen = coutelasAim(manual)
+  assert.ok(weaponInput(manual, { at: manual.tick, tap: true }))
+  advanceWeapon(manual, 6000)
+  assert.equal(manual.throws, 1)
+  assert.equal(manual.shots.length, 1)
+  assert.equal(coutelasAim(manual).power, chosen.power)
+})
+
 test('coutelas can fly over the target without scoring, and marks the previewed landing when it misses', () => {
   const run = createWeaponRun('coutelas', 42)
   advanceWeapon(run, 1300)
@@ -85,7 +133,9 @@ function bestTiming(run: WeaponRun, errorAt: (aim: ReturnType<typeof coutelasAim
   let bestTick = run.tick
   let bestError = Infinity
   // Search a complete sweep in legal input ticks on the actual aiming guide.
-  for (let delta = STEP; delta <= 5200; delta += STEP) {
+  const deadline = coutelasAim(run).powerTimeLeftMs ?? Infinity
+  const maxWait = Math.min(5200, deadline - STEP)
+  for (let delta = STEP; delta <= maxWait; delta += STEP) {
     const error = errorAt(coutelasAim({ ...run, tick: run.tick + delta }))
     if (error < bestError) {
       bestError = error
@@ -100,6 +150,8 @@ test('every generated target is reachable by the two timers at opening and maxim
     for (let seed = 1; seed <= 40; seed++) {
       const run = createWeaponRun('coutelas', Math.imul(seed, 0x9e3779b9))
       run.hits = previousHits
+      const previousScore = previousHits * 300
+      run.score = previousScore
       const bug = run.targets[0]!
       const targetAngle = Math.atan2(COUTELAS_ORIGIN.y - bug.y, bug.x - COUTELAS_ORIGIN.x) * 180 / Math.PI
       advanceWeapon(run, bestTiming(run, aim => Math.abs(aim.angle - targetAngle)))
@@ -109,10 +161,10 @@ test('every generated target is reachable by the two timers at opening and maxim
       assert.ok(weaponInput(run, { at: run.tick, tap: true }))
       const impactTick = run.tick + run.shots[0]!.flight!.duration
       advanceWeapon(run, impactTick - STEP)
-      assert.equal(run.score, 0)
+      assert.equal(run.score, previousScore)
       assert.equal(run.landedThrows, 0)
       advanceWeapon(run, impactTick)
-      assert.equal(run.score, 300)
+      assert.equal(run.score, previousScore + 300)
       assert.equal(run.hits, previousHits + 1)
       assert.equal(coutelasAim(run).phase, 'waiting')
       assert.deepEqual(coutelasAim(run).landing, expectedLanding)

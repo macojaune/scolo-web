@@ -15,3 +15,4 @@ export const finishInput = z.object({
 })
 export type FinishedRun = z.infer<typeof finishInput>
 export type ScoreReceipt = { id: string; elapsedMs: number; crushed: number; claimed: boolean; points?: number }
+export type CompletedWeaponScore = { id: string; token: string; elapsedMs: number; points: number }
